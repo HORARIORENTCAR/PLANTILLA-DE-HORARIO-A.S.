@@ -529,10 +529,13 @@ const EQUIPOS = [
     sub:'Rotacion automatica entre Terminal A y Terminal B' },
   /* El id se queda en 'supervision' a proposito: es lo que hay guardado en
      los datos de todo el mundo. Lo que cambia es como se llama en pantalla. */
-  { id:'supervision', clase:'sup', nombre:'Gerencia',
-    sub:'Horario fijo, uno por persona. Los feriados, cada uno con su regla' },
+  /* El orden de esta lista es el orden en que salen las tres tablas y en
+     el que se exporta todo: agentes de renta, agentes de servicio y, al
+     final, gerencia. */
   { id:'servicio',    clase:'ser', nombre:'Agentes de Servicio',
-    sub:'Los turnos giran un puesto cada dia' }
+    sub:'Los turnos giran un puesto cada dia' },
+  { id:'supervision', clase:'sup', nombre:'Gerencia',
+    sub:'Horario fijo, uno por persona. Los feriados, cada uno con su regla' }
 ];
 const EQUIPO_IDS = EQUIPOS.map(x => x.id);
 const infoEquipo = (id) => EQUIPOS.find(x => x.id === id) || EQUIPOS[0];
@@ -810,52 +813,24 @@ function nucleoServicioDia(d){
    semana el turno pasa al siguiente de la lista, y nadie repite hasta que
    todos hayan pasado.
 
-   La cuenta cierra sola con tres agentes: 3 x 7 = 21 dias, menos 4 de
-   descanso (uno con 2 y dos con 1) quedan 17 turnos, que son los 14 de
-   los dos principales mas 3 de refuerzo. Los tres dias de refuerzo caen
-   en los dias en que no libra nadie.
+   La cuenta cierra sola con tres agentes: 3 x 7 = 21 dias, menos 3 de
+   descanso (uno cada uno) quedan 18 turnos, que son los 14 de los dos
+   principales mas 4 de refuerzo. Los cuatro dias de refuerzo caen en los
+   dias en que no libra nadie: los lunes y los sabados, que son los del
+   turno clavado, mas otros dos.
    ===================================================================== */
-function rotacionLibresServicio(){
-  const r = (S.config.servicio || {}).rotacionLibres;
-  const orden = (r && Array.isArray(r.orden) ? r.orden : [])
-    .filter(id => { const e = empleado(id); return e && e.activo && equipoDe(e) === 'servicio'; });
-  return { orden, inicio: (r && r.inicio >= 0) ? r.inicio : 0 };
-}
-/* A quien le tocan los dos dias seguidos esa semana */
-function turnoDosLibresServicio(k){
-  k = k || SEMANA;
-  const w = S.semanas[k];
-  if(w && w.turno2ser && empleado(w.turno2ser)) return w.turno2ser;   // cambiado a mano esa semana
-  const { orden, inicio } = rotacionLibresServicio();
-  if(!orden.length) return null;
-  const nn = orden.length;
-  const base = ((semanasAbsolutas(k) + inicio) % nn + nn) % nn;
-  /* Si a quien le toca ya falta dos dias o mas por vacaciones, licencia o
-     permiso, el turno pasa al siguiente: ya descansa seguido de sobra. La
-     rotacion sigue por donde iba, asi que a el le llegara. */
-  for(let j = 0; j < nn; j++){
-    const id = orden[(base + j) % nn];
-    if(diasAusente(id, k).length < 2) return id;
-  }
-  return orden[base];
-}
-/* Dentro de cuantas semanas le vuelve a tocar */
-function proximaVezDosLibresServicio(empId, k){
-  const { orden } = rotacionLibresServicio();
-  if(orden.indexOf(empId) < 0) return null;
-  for(let i = 0; i < orden.length; i++) if(turnoDosLibresServicio(addDias(k, 7*i)) === empId) return i;
-  return null;
-}
-/* Cuantos dias libres le tocan a cada uno esa semana */
+/* Cuantos dias libres le tocan a cada uno esa semana: UNO, siempre.
+   Aqui no hay turno de dos dias seguidos como en agentes de renta; se
+   probo y se quito, porque con tres agentes el segundo dia se comia el
+   refuerzo del mediodia media semana. */
 function libresServicioPorPersona(k){
   k = k || SEMANA;
-  const turno2 = turnoDosLibresServicio(k);
   const out = {};
   plantilla('servicio').forEach(e => {
     const fuera = diasAusente(e.id, k).length;
     /* Un dia de ausencia no es un dia libre, pero si esa semana ya esta
        fuera varios dias, no se le suman ademas los suyos: no cabrian. */
-    out[e.id] = Math.max(0, Math.min(turno2 === e.id ? 2 : 1, 7 - fuera));
+    out[e.id] = Math.max(0, Math.min(1, 7 - fuera));
   });
   return out;
 }
@@ -970,6 +945,20 @@ function agentesServicioDia(d, k){
   const plan = patronLibresServicio(k);
   return plantilla('servicio').filter(e =>
     !diaReservado(e.id, d, k) && (plan[e.id] || []).indexOf(d) < 0).length;
+}
+/* El turno que entra mas temprano y el que entra mas tarde de los que se
+   abren ese dia en agentes de servicio. De ahi salen "el 7-3" y "el 3-11"
+   sin escribirlos a mano. */
+function extremosServicioDia(d, k){
+  let pronto = null, tarde = null;
+  turnosServicioDia(d, k).forEach(x => {
+    const tt = turno(x.turnoId);
+    if(!tt) return;
+    const m = min2(tt.inicio);
+    if(pronto === null || m < pronto) pronto = m;
+    if(tarde  === null || m > tarde)  tarde  = m;
+  });
+  return { pronto, tarde };
 }
 /* Los turnos que se abren de verdad ese dia: tantos como agentes haya,
    cogidos por orden de la lista. */
@@ -1107,6 +1096,10 @@ function datosDemo(){
         orden: empleados.filter(e => e.equipo === 'rotativo' && e.nombre !== 'ISAAC').map(e => e.id),
         inicio: 2
       },
+      /* El otro reparto de descansos, apagado de fabrica. Ver el bloque
+         "DOS SEMANAS, DOS DESCANSOS" mas abajo. */
+      modoDosUno: false,
+      modoDosUnoDesfase: 0,
       prioridad: prioridadInicial(puestos, turnos),
       supervision: supervisionInicial(turnos, empleados),
       servicio: { cobertura: coberturaServicioInicial(turnos),
@@ -1166,6 +1159,9 @@ function sanear(){
   if(!S.pin) S.pin = '1234';
   if(!S.config || typeof S.config !== 'object') S.config = {};
   if(!(S.config.maxLibresDia >= 1)) S.config.maxLibresDia = 2;
+  /* El interruptor del reparto de dos-y-uno */
+  S.config.modoDosUno = !!S.config.modoDosUno;
+  S.config.modoDosUnoDesfase = S.config.modoDosUnoDesfase ? 1 : 0;
   if(!S.config.semanaRef) S.config.semanaRef = lunesDe(hoyISO());
   if(!S.nube || typeof S.nube !== 'object') S.nube = { url:'', clave:'', activa:false, id:'principal', ultima:null };
   if(!Array.isArray(S.turnos) || !S.turnos.length) S.turnos = turnosIniciales();
@@ -2164,6 +2160,37 @@ function proximaVezDosLibres(empId, k){
    ===================================================================== */
 let _libresCache = { k:null, firma:null, val:null };
 function olvidarLibres(){ _libresCache = { k:null, firma:null, val:null }; }
+/* =====================================================================
+   DOS SEMANAS, DOS DESCANSOS
+   El reparto de siempre le da dos dias seguidos a UNA persona por semana y
+   uno a las demas. Este es el otro: TODOS libran dos dias seguidos una
+   semana, uno la siguiente, dos la otra, y asi. Nadie queda fuera, ni
+   siquiera quien esta en entrenamiento.
+
+   Con siete personas la cuenta cierra por los dos lados:
+     - Semana de dos: 7 x 2 = 14 descansos en 7 dias, o sea 2 por dia.
+       Quedan 5 trabajando y se abren 5 puestos: los 4 principales y uno de
+       relleno. Y las siete parejas de dias seguidos (lunes-martes,
+       martes-miercoles... domingo-lunes) tapan cada dia exactamente dos
+       veces, que es justo lo que hace falta.
+     - Semana de uno: 7 descansos en 7 dias, uno por dia. Quedan 6
+       trabajando y se abren 6 puestos.
+
+   Se enciende en Ajustes y se apaga igual. Todo lo demas sigue mandando:
+   los cuatro principales, los dos dias seguidos de verdad, el descanso
+   minimo, los siete dias como maximo y el 7-3 de la vispera con el 3-11
+   de la vuelta.
+
+   Con cuatro personas o menos se apaga solo: ahi no hay margen ni para el
+   primer dia de descanso, y menos para el segundo.
+   ===================================================================== */
+function modoDosUno(){ return !!(S.config && S.config.modoDosUno); }
+/* ¿A esta semana le tocan dos dias libres o uno? */
+function semanaDeDos(k){
+  k = k || SEMANA;
+  const des = (S.config && S.config.modoDosUnoDesfase) ? 1 : 0;
+  return (((semanasAbsolutas(k) + des) % 2) + 2) % 2 === 0;
+}
 function libresPorPersona(k){
   k = k || SEMANA;
   const emps = activos();
@@ -2173,13 +2200,19 @@ function libresPorPersona(k){
   let disponibles = 0;
   emps.forEach(e => { if(diasAusente(e.id, k).length < 7) disponibles++; });
   const corta = disponibles <= PLANTILLA_CORTA;
+  const dosUno = modoDosUno() && !corta;
+  const semDos = dosUno && semanaDeDos(k);
   const firma = emps.map(e => e.id + ':' + diasAusente(e.id, k).length +
-                              (e.dosLibresFijos ? 'F' : '')).join(',') + '|' + (turno2 || '-') + (corta ? '|c' : '');
+                              (e.dosLibresFijos ? 'F' : '')).join(',') + '|' + (turno2 || '-') +
+                (corta ? '|c' : '') + (dosUno ? (semDos ? '|d2' : '|d1') : '');
   if(_libresCache.k === k && _libresCache.firma === firma) return _libresCache.val;
 
   const info = emps.map(e => {
     const fuera = diasAusente(e.id, k).length;
-    const suyos = corta ? 1 : (e.dosLibresFijos ? 2 : (turno2 === e.id ? 2 : 1));
+    /* En el reparto de dos-y-uno todos llevan lo mismo esa semana */
+    const suyos = corta ? 1
+                : dosUno ? (semDos ? 2 : 1)
+                : (e.dosLibresFijos ? 2 : (turno2 === e.id ? 2 : 1));
     /* A quien tiene dia libre fijo en su ficha no se le puede recortar por
        debajo de ese dia: va a librarlo igual, y si aqui pusiera cero la
        cuenta del cupo saldria torcida y ese dia acabarian librando dos.
@@ -2226,7 +2259,8 @@ function libresSemana(empId, k){
   /* alguien que no esta en la plantilla activa del counter */
   const e = empleado(empId);
   const fuera = diasAusente(empId, k).length;
-  const suyos = (e && e.dosLibresFijos) ? 2 : (turnoDosLibres(k) === empId ? 2 : 1);
+  const suyos = modoDosUno() ? (semanaDeDos(k) ? 2 : 1)
+              : ((e && e.dosLibresFijos) ? 2 : (turnoDosLibres(k) === empId ? 2 : 1));
   return Math.max(0, Math.min(suyos, 7 - fuera));
 }
 /* Dias de trabajo que le tocan a una persona en una semana */
@@ -3856,6 +3890,30 @@ function puntuarCandidato(ctx, emp, d, t, puestoId, pesos){
   if(esLibre(manana)) pts += escalon(sale, 16*60, 18*60)          * 240 * suyos * P.equilibrio;  // manana libra: salir pronto
   if(esLibre(ayer))   pts += escalon(-entra, -15*60, -12*60)      * 240 * suyos * P.equilibrio;  // ayer libro: entrar tarde
 
+  /* Y el turno concreto, que es lo que se pidio: el 7-3 la vispera y el
+     3-11 el dia de vuelta. Pesa mucho mas que lo de arriba, que se queda
+     como desempate para los dias en que ese turno ya lo cogio otro.
+
+     Quien esta en entrenamiento se queda fuera: solo hace los turnos de
+     relleno de Dollar Thrifty, asi que ni el 7-3 ni el 3-11 son suyos y
+     empujarlo hacia ellos solo estropearia el reparto de los demas. */
+  if(!entrenando(emp)){
+    const ext = extremosDelDia(d, ctx.k);
+    const vispera = esLibre(manana), vuelta = esLibre(ayer);
+    /* Entre dos dias libres la regla se contradice sola: no se puede entrar
+       a las 7 por irse manana y a las 3 por haber vuelto hoy. Ese dia se
+       deja pasar y vale cualquiera de los dos. */
+    if(vispera !== vuelta){
+      const quiere = vispera ? ext.pronto : ext.tarde;   // el que le toca
+      const evita  = vispera ? ext.tarde  : ext.pronto;  // justo el contrario
+      if(quiere !== null && entra === quiere) pts += 2000 * suyos * P.equilibrio;
+      /* Y el castigo, que es la mitad que faltaba: los turnos de tarde se
+         reparten ANTES que los de manana, asi que sin esto la persona ya
+         estaba cogida en el 3-11 cuando le llegaba el turno al 7-3. */
+      else if(evita !== null && entra === evita) pts -= 2000 * suyos * P.equilibrio;
+    }
+  }
+
   // 3. Rotacion de turnos: que no le toque siempre el mismo
   const mismoTurno = (ctx.celdas && Object.keys(ctx.celdas).reduce((n,key) => {
     if(!key.startsWith(emp.id + '_')) return n;
@@ -3970,6 +4028,31 @@ function puestosImposibles(k){
      pueda hacer los puestos que quedan abiertos, y eso se estima con los
      principales, que son los que de verdad importan. */
   return manosPrevistas(k);
+}
+
+/* =====================================================================
+   EL TURNO DE ANTES Y EL DE DESPUES DEL DESCANSO
+   El dia antes de librar se entra en el PRIMER turno del dia -el 7-3-, y
+   el dia que se vuelve, en el ULTIMO -el 3-11-. Asi el descanso se estira
+   por los dos lados: se sale a las 3 de la tarde, se libra, y se vuelve a
+   las 3 de la tarde del otro dia. Con dos dias libres son mas de tres
+   dias enteros fuera.
+
+   No se escriben "7-3" y "3-11" a mano: se miran los turnos que ese dia
+   abre la lista de prioridad y se cogen el que entra mas temprano y el
+   que entra mas tarde. Si mañana cambias la lista, la regla sigue
+   valiendo sin tocar nada.
+   ===================================================================== */
+function extremosDelDia(d, k){
+  let pronto = null, tarde = null;
+  prioridadDia(d, k || SEMANA).forEach(x => {
+    const tt = turno(x.turnoId);
+    if(!tt) return;
+    const m = min2(tt.inicio);
+    if(pronto === null || m < pronto) pronto = m;
+    if(tarde  === null || m > tarde)  tarde  = m;
+  });
+  return { pronto, tarde };
 }
 
 /* Cuantos podrian, en principio, cubrir ese puesto ese dia */
@@ -5018,10 +5101,62 @@ function generarServicio(k, opciones){
       if(b){ const tmp = asig[b.id]; asig[b.id] = t; asig[a.id] = tmp; }
       else asig[a.id] = null;
     });
+    /* =================================================================
+       LA VISPERA Y LA VUELTA DEL DIA LIBRE
+       Lo mismo que en agentes de renta: el dia antes de librar se entra en
+       el PRIMER turno del dia -el 7-3- y el dia que se vuelve, en el
+       ULTIMO -el 3-11-. Asi se sale a las 3, se libra, y se vuelve a las 3
+       del otro dia: casi 48 horas seguidas fuera.
+
+       Se hace intercambiando turnos entre companeros y no puntuando: el
+       giro ya reparte, y lo unico que hace falta es corregirlo cuando a
+       alguien le toco el turno contrario al que le corresponde.
+       ================================================================= */
+    const extS = extremosServicioDia(d, k);
+    /* Se mira el PLAN de descansos, no las casillas: los dias se reparten
+       de lunes a domingo, asi que cuando se esta repartiendo el lunes la
+       casilla del martes todavia no existe y nunca se veia que manana
+       libraba. El plan si esta hecho de antemano para la semana entera.
+       Un dia de vacaciones cuenta igual que un dia libre: la vispera se
+       sale pronto y el regreso se entra tarde lo mismo. */
+    const libreEn = (e, dd) => {
+      if(dd >= 0 && dd <= 6)
+        return (plan[e.id] || []).indexOf(dd) >= 0 || ausenteEnDia(e.id, dd, k);
+      const c = dd < 0 ? celda(e.id, 6, addDias(k, -7)) : celda(e.id, 0, addDias(k, 7));
+      return !!(c && c.t === LIBRE);
+    };
+    /* que turno le toca hoy por la regla, o null si no le aplica */
+    const leToca = (e) => {
+      const vispera = libreEn(e, d + 1), vuelta = libreEn(e, d - 1);
+      if(vispera === vuelta) return null;            // ni lo uno ni lo otro, o las dos
+      return vispera ? extS.pronto : extS.tarde;
+    };
+    for(let pasada = 0; pasada < 2; pasada++){
+      rotados.forEach(a => {
+        const quiere = leToca(a);
+        if(quiere === null) return;
+        const suyo = asig[a.id] && turno(asig[a.id]);
+        if(suyo && min2(suyo.inicio) === quiere) return;      // ya lo tiene
+        /* quien lo tenga y no lo necesite */
+        const b = rotados.find(x => {
+          if(x.id === a.id) return false;
+          const t2 = asig[x.id] && turno(asig[x.id]);
+          if(!t2 || min2(t2.inicio) !== quiere) return false;
+          if(leToca(x) === quiere) return false;              // a el tambien le toca: no se le quita
+          if((x.turnosProhibidos || []).indexOf(asig[a.id]) >= 0) return false;
+          if((a.turnosProhibidos || []).indexOf(asig[x.id]) >= 0) return false;
+          return true;
+        });
+        if(b){ const tmp = asig[b.id]; asig[b.id] = asig[a.id]; asig[a.id] = tmp; }
+      });
+    }
+
     /* Con dos personas y dos turnos el giro puro los hace alternar todos
        los dias, y quien cierra a las 11 abriria a las 7: justo el descanso
        minimo, y por debajo si lo cambias en Ajustes. Si intercambiando dos
-       turnos entre companeros se arregla, se intercambian. */
+       turnos entre companeros se arregla, se intercambian.
+       Ojo: no se toca a quien tiene turno por la vispera o la vuelta, que
+       esos ya estan donde deben. */
     const ayerDe = (e) => {
       const c = d > 0 ? celda(e.id, d - 1, k) : celda(e.id, 6, addDias(k, -7));
       return (c && c.t !== LIBRE && !esAusencia(c)) ? turno(c.t) : null;
@@ -5036,6 +5171,7 @@ function generarServicio(k, opciones){
         const A = rotados[i], B = rotados[j];
         const ta = asig[A.id], tb = asig[B.id];
         if(ta === tb) continue;
+        if(leToca(A) !== null || leToca(B) !== null) continue;   // la vispera y la vuelta mandan
         if(ta && (B.turnosProhibidos || []).indexOf(ta) >= 0) continue;
         if(tb && (A.turnosProhibidos || []).indexOf(tb) >= 0) continue;
         const antes = Math.min(descansoDe(A, ta), descansoDe(B, tb));
@@ -5706,15 +5842,6 @@ function fichasHTML(lista, k){
         if(n) marcas.push('<span class="marc"><i>2 dias seguidos</i>en ' + n + (n === 1 ? ' semana' : ' semanas') + '</span>');
       }
     }
-    if(equipoDe(e) === 'servicio'){
-      const kk = k;
-      if(turnoDosLibresServicio(kk) === e.id) marcas.push('<span class="marc" style="border-color:var(--ok-line);background:var(--ok-bg);color:var(--ok)">' +
-        '<i style="color:var(--ok)">Esta semana</i>2 dias seguidos</span>');
-      else {
-        const nv = proximaVezDosLibresServicio(e.id, kk);
-        if(nv) marcas.push('<span class="marc"><i>2 dias seguidos</i>en ' + nv + (nv === 1 ? ' semana' : ' semanas') + '</span>');
-      }
-    }
     if(esRot && e.maxDiasConsec !== 7) marcas.push('<span class="marc"><i>Max. seguidos</i>' + e.maxDiasConsec + '</span>');
     if(e.telefono)                    marcas.push('<span class="marc"><i>Tel.</i>' + esc(e.telefono) + '</span>');
     if(entrenando(e))                 marcas.unshift('<span class="pill warn">En entrenamiento</span>');
@@ -6104,13 +6231,70 @@ function historialDe(id){
    Se ve la vuelta entera: quien va antes, quien va despues y en que
    semana le toca a cada uno. El orden se cambia con las flechas.
    ===================================================================== */
+/* Le da la vuelta a que semana lleva dos dias y cual uno */
+function cambiarSemanaDosUno(){
+  S.config.modoDosUnoDesfase = S.config.modoDosUnoDesfase ? 0 : 1;
+  bitacora('Cambio el arranque del reparto de dos-y-uno: ahora esta semana lleva ' +
+           (semanaDeDos(SEMANA) ? 'dos dias libres' : 'un dia libre') + '.');
+  priTocar('');
+  toast('Esta semana pasa a ' + (semanaDeDos(SEMANA) ? '2 dias libres' : '1 dia libre'));
+}
+/* Enciende o apaga el reparto de dos-y-uno */
+function ponerModoDosUno(v){
+  S.config.modoDosUno = !!v;
+  bitacora(v ? 'Se encendio el reparto de dos-y-uno en agentes de renta: todos libran dos dias una semana y uno la siguiente.'
+             : 'Se apago el reparto de dos-y-uno: vuelve el turno de dos dias seguidos por rotacion.');
+  priTocar('');
+  toast(v ? 'Reparto de dos-y-uno encendido' : 'Vuelve el reparto de siempre');
+}
+
 function ajustesRotacion(){
   const k = SEMANA || lunesDe(hoyISO());
   const { orden } = rotacionLibres();
   const fuera = activos().filter(e => orden.indexOf(e.id) < 0);
+  const dosUno = modoDosUno();
 
-  let h = '<div class="card"><h2>Agentes de Renta: turno de los 2 dias libres seguidos</h2>' +
-    '<p class="muted" style="margin-top:-4px">Cada semana le toca a una sola persona librar dos dias seguidos; ' +
+  let h = '<div class="card"><h2>Agentes de Renta: los dias libres</h2>';
+
+  /* =================================================================
+     EL INTERRUPTOR DE LOS DOS REPARTOS
+     Van juntos a proposito: son dos formas de repartir lo mismo y hay
+     que poder ver las dos y cambiar de una a otra sin buscar nada.
+     ================================================================= */
+  h += '<label class="chk" style="font-size:14.5px"><input type="checkbox"' + (dosUno ? ' checked' : '') +
+       ' onchange="ponerModoDosUno(this.checked)"> <b>Todos libran 2 dias una semana y 1 la siguiente</b></label>' +
+       '<p class="tiny muted" style="margin:-2px 0 10px">Con la casilla marcada, <b>todas</b> las personas ' +
+       '&mdash;incluida la que este en entrenamiento&mdash; libran dos dias seguidos una semana, uno la ' +
+       'siguiente, dos la otra, y asi. Sin marcar, se reparte como siempre: dos dias seguidos para una sola ' +
+       'persona por semana, por turno riguroso.</p>';
+
+  if(dosUno){
+    const dos = semanaDeDos(k);
+    const cuenta = activos().length;
+    h += '<div class="alert ok" style="margin-bottom:10px"><b>Reparto de dos-y-uno encendido</b>' +
+      'Esta semana (' + fechaCorta(k) + ') <b>todos libran ' + (dos ? '2 dias seguidos' : '1 dia') + '</b>, ' +
+      'y la que viene, ' + (dos ? '1 dia' : '2 dias seguidos') + '.</div>';
+    h += '<table class="data"><thead><tr><th>Semana</th><th>Cuantos dias libra cada uno</th><th>Trabajan al dia</th></tr></thead><tbody>';
+    for(let i = 0; i < 6; i++){
+      const kk = addDias(k, 7*i);
+      const d2 = semanaDeDos(kk);
+      h += '<tr' + (i === 0 ? ' style="background:var(--ok-bg)"' : '') + '>' +
+        '<td><b>' + fechaCorta(kk) + '</b> al ' + fechaCorta(addDias(kk,6)) + (i === 0 ? ' <span class="pill ok">esta</span>' : '') + '</td>' +
+        '<td>' + (d2 ? '<b>2 dias seguidos</b>' : '1 dia') + '</td>' +
+        '<td class="tiny muted">' + Math.max(0, cuenta - (d2 ? 2 : 1)) + ' de ' + cuenta + '</td></tr>';
+    }
+    h += '</tbody></table>';
+    h += '<button class="btn sec sm" style="margin-top:8px" onclick="cambiarSemanaDosUno()">Empezar al reves</button>' +
+         '<span class="tiny muted" style="margin-left:8px">Por si esta semana deberia ser la de ' +
+         (semanaDeDos(k) ? '1 dia' : '2 dias') + '.</span>';
+    h += '<p class="tiny muted" style="margin:12px 0 0">Todo lo demas sigue igual: los cuatro puestos principales, ' +
+         'los dos dias de descanso siempre seguidos, el 7-3 la vispera y el 3-11 la vuelta, ' +
+         'el descanso minimo entre turnos y los siete dias seguidos como maximo. ' +
+         'Con cuatro personas o menos este reparto se apaga solo, porque no hay margen.</p>';
+    return h + '</div>';
+  }
+
+  h += '<p class="muted" style="margin-top:-4px">Cada semana le toca a una sola persona librar dos dias seguidos; ' +
     'las demas libran uno. Al acabar la semana el turno pasa al siguiente de la lista, y nadie repite ' +
     'hasta que todos hayan pasado.</p>';
 
@@ -6536,34 +6720,12 @@ function ajustesServicio(){
       ' &middot; ' + hora12(t.inicio) + ' a ' + hora12(t.fin) + '</option>').join('') + '</select></label>' +
     '<button class="btn" onclick="serAnadir()">Anadir a la lista</button></div>';
 
-  /* El turno de los dos dias libres seguidos */
-  const rot = rotacionLibresServicio();
-  h += '<h3 style="margin-top:16px">Turno de los 2 dias libres seguidos</h3>' +
-    '<p class="tiny muted" style="margin-top:-6px">Cada semana le toca a un solo agente librar dos dias seguidos; ' +
-    'los demas libran uno. Al acabar la semana el turno pasa al siguiente, y nadie repite hasta que todos hayan pasado.</p>';
-  if(!rot.orden.length){
-    h += '<div class="alert warn" style="margin:0">No hay ningun agente de servicio en la rotacion.</div>';
-  } else {
-    h += '<table class="data"><thead><tr><th style="width:52px">Orden</th><th>Agente</th><th>Le toca</th>' +
-         '<th>Semana</th><th style="width:96px"></th></tr></thead><tbody>';
-    rot.orden.forEach((id, i) => {
-      const e2 = empleado(id);
-      if(!e2) return;
-      const nv = proximaVezDosLibresServicio(id, k);
-      const kk = nv === null ? null : addDias(k, 7*nv);
-      h += '<tr' + (nv === 0 ? ' style="background:var(--ok-bg)"' : '') + '>' +
-        '<td><b>' + (i+1) + '</b></td>' +
-        '<td><b>' + esc(e2.nombre) + '</b></td>' +
-        '<td>' + (nv === 0 ? '<span class="pill ok">esta semana</span>'
-                           : '<span class="tiny muted">en ' + nv + (nv === 1 ? ' semana' : ' semanas') + '</span>') + '</td>' +
-        '<td class="tiny">' + (kk ? fechaCorta(kk) + ' al ' + fechaCorta(addDias(kk,6)) : '-') + '</td>' +
-        '<td style="text-align:right;white-space:nowrap">' +
-          '<button class="btn sec sm" ' + (i === 0 ? 'disabled' : '') + ' onclick="moverRotacionServicio(' + i + ',-1)" title="Subir">&uarr;</button> ' +
-          '<button class="btn sec sm" ' + (i === rot.orden.length-1 ? 'disabled' : '') + ' onclick="moverRotacionServicio(' + i + ',1)" title="Bajar">&darr;</button>' +
-        '</td></tr>';
-    });
-    h += '</tbody></table>';
-  }
+  /* Los dias libres: uno por cabeza y punto. Aqui no hay rotacion de dos
+     dias seguidos como en agentes de renta. */
+  h += '<h3 style="margin-top:16px">Los dias libres</h3>' +
+    '<p class="tiny muted" style="margin-top:-6px">Cada agente libra <b>un dia por semana</b>. ' +
+    'El dia lo elige el reparto: nunca cae en un dia del turno clavado, ni deja un turno principal sin nadie. ' +
+    'La vispera se entra en el primer turno del dia y el dia de vuelta en el ultimo.</p>';
 
   /* Quien hace el turno clavado */
   const act = clavadoServicio();
@@ -6587,11 +6749,9 @@ function ajustesServicio(){
   const nuc = l.filter(x => x.clave).length;
   const abren = []; for(let d = 0; d < 7; d++) abren.push(turnosServicioDia(d, k).length);
   const falta = faltanManosServicio(k);
-  const dosDe = empleado(turnoDosLibresServicio(k));
   h += '<div class="alert ' + (falta ? 'warn' : 'info') + '" style="margin-top:14px">' +
     '<b>' + nuc + ' principal(es)</b> y ' + (l.length - nuc) + ' de refuerzo, con ' + eq.length + ' agente(s). ' +
-    'Esta semana se abren ' + abren.join(', ') + ' turnos, de lunes a domingo: ' +
-    (dosDe ? esc(dosDe.nombre) + ' libra dos dias seguidos y los demas uno.' : 'nadie tiene turno de dos dias.') +
+    'Esta semana se abren ' + abren.join(', ') + ' turnos, de lunes a domingo, y cada agente libra un dia.' +
     (falta ? ' <b>Ojo:</b> faltan manos para ' + falta + ' turno(s) principal(es) esta semana.' : '') + '</div>';
   return h + '</div>';
 }
@@ -6645,17 +6805,6 @@ function serAnadir(){
      puede hacer falta abrir dos veces la misma franja. */
   S.config.servicio.prioridad.push({ turnoId:tid, dias:[1,1,1,1,1,1,1], clave:false });
   serTocar('Se anadio ' + ((turno(tid) || {}).corto || '?') + ' a la lista de agentes de servicio.');
-}
-function moverRotacionServicio(i, paso){
-  const l = (S.config.servicio || {}).rotacionLibres;
-  if(!l || !Array.isArray(l.orden)) return;
-  const j = i + paso;
-  if(j < 0 || j >= l.orden.length) return;
-  const t = l.orden[j]; l.orden[j] = l.orden[i]; l.orden[i] = t;
-  olvidarLibresServicio();
-  bitacora('Se cambio el orden del turno de 2 dias libres de los agentes de servicio.');
-  guardar();
-  if(PANTALLA === 'ajustes') render();
 }
 function guardarServicioPuesto(){
   S.config.servicio.puestoId = el('ser_puesto').value || null;
@@ -9712,53 +9861,63 @@ function pruebas(){
     ok('Con toda la plantilla de servicio no queda ningun turno sin cubrir',
        cubiertos(ks) === 0);
 
-    /* --- el turno de los dos dias libres seguidos --- */
-    const ROTS = rotacionLibresServicio();
-    ok('Cada semana el turno de 2 dias libres del servicio es de UNO solo',
-       (() => {
-         const t = libresServicioPorPersona(ks);
-         return Object.keys(t).filter(id => t[id] === 2).length === (ROTS.orden.length ? 1 : 0);
-       })(),
-       'esta semana: ' + ((empleado(turnoDosLibresServicio(ks)) || {}).nombre || '-'));
-    ok('A cada agente le tocan 2 o 1 dias libres, nunca otra cosa',
+    /* --- los dias libres: uno por cabeza --- */
+    ok('Cada agente de servicio libra UN dia por semana',
        (() => { const t = libresServicioPorPersona(ks);
-         return plantilla('servicio').every(e => [1,2].indexOf(t[e.id]) >= 0); })(),
+         return plantilla('servicio').every(e => t[e.id] === 1); })(),
        plantilla('servicio').map(e => e.nombre + ':' + libresServicioPorPersona(ks)[e.id]).join(' '));
-    ok('El turno de 2 dias del servicio pasa al siguiente cada semana',
-       (() => {
-         if(ROTS.orden.length < 2) return true;
-         const a = ROTS.orden.indexOf(turnoDosLibresServicio(ks));
-         const b = ROTS.orden.indexOf(turnoDosLibresServicio(addDias(ks, 7)));
-         return b === (a + 1) % ROTS.orden.length;
-       })(),
-       ROTS.orden.map(id => (empleado(id)||{}).nombre).join(' -> '));
-    ok('Ningun agente repite el turno de 2 dias hasta que pasen todos',
-       (() => {
-         if(!ROTS.orden.length) return true;
-         const vistos = {};
-         for(let i = 0; i < ROTS.orden.length; i++) vistos[turnoDosLibresServicio(addDias(ks, 7*i))] = 1;
-         return Object.keys(vistos).length === ROTS.orden.length;
-       })(),
-       'la vuelta dura ' + ROTS.orden.length + ' semanas');
-    ok('Los dos dias libres del servicio van siempre seguidos',
-       (() => {
-         for(const e of plantilla('servicio')){
-           const L = [];
-           for(let d = 0; d < 7; d++) if(esLibreReal(celda(e.id, d, ks))) L.push(d);
-           if(L.length !== 2) continue;
-           if(!(L[1] - L[0] === 1 || (L[0] === 0 && L[1] === 6))) return false;
-         }
-         return true;
-       })(),
+    ok('Y ese dia esta puesto en la hoja',
+       plantilla('servicio').every(e => {
+         let L = 0;
+         for(let d = 0; d < 7; d++) if(esLibreReal(celda(e.id, d, ks))) L++;
+         return L === libresServicioPorPersona(ks)[e.id];
+       }),
        plantilla('servicio').map(e => { const L = [];
          for(let d = 0; d < 7; d++) if(esLibreReal(celda(e.id, d, ks))) L.push(DIAS_CORTO[d]);
          return e.nombre + ':' + (L.join('+') || '-'); }).join('  '));
-    ok('Cada agente libra los dias que le tocan esa semana',
+    ok('Ya no hay turno de dos dias seguidos en agentes de servicio',
        (() => { const t = libresServicioPorPersona(ks);
-         return plantilla('servicio').every(e => {
-           let L = 0; for(let d = 0; d < 7; d++) if(esLibreReal(celda(e.id, d, ks))) L++;
-           return L === t[e.id];
-         }); })());
+         return !plantilla('servicio').some(e => t[e.id] >= 2); })());
+
+    /* --- la vispera y la vuelta --- */
+    ok('La vispera del dia libre se entra en el primer turno y el dia de vuelta en el ultimo',
+       (() => {
+         let mal = 0;
+         for(const e of plantilla('servicio')){
+           for(let d = 0; d < 7; d++){
+             const c = celda(e.id, d, ks);
+             if(!c || c.t === LIBRE || esAusencia(c)) continue;
+             const t = turno(c.t);
+             if(!t) continue;
+             /* el turno clavado manda sobre esto: lo hace siempre el mismo */
+             if(fijoDe(e.id, d)) continue;
+             const ext = extremosServicioDia(d, ks), entra = min2(t.inicio);
+             const man = d < 6 ? celda(e.id, d+1, ks) : celda(e.id, 0, addDias(ks, 7));
+             const ay  = d > 0 ? celda(e.id, d-1, ks) : celda(e.id, 6, addDias(ks, -7));
+             const esV = !!(man && man.t === LIBRE && !esAusencia(man));
+             const esR = !!(ay  && ay.t  === LIBRE && !esAusencia(ay));
+             if(esV === esR) continue;                 // ni lo uno ni lo otro, o las dos
+             const quiere = esV ? ext.pronto : ext.tarde;
+             if(quiere !== null && entra !== quiere) mal++;
+           }
+         }
+         return mal === 0;
+       })(),
+       (() => {
+         const l = [];
+         for(const e of plantilla('servicio')){
+           for(let d = 0; d < 7; d++){
+             const c = celda(e.id, d, ks);
+             if(!c || c.t === LIBRE || esAusencia(c) || fijoDe(e.id, d)) continue;
+             const man = d < 6 ? celda(e.id, d+1, ks) : null;
+             const ay  = d > 0 ? celda(e.id, d-1, ks) : null;
+             if(man && man.t === LIBRE) l.push(e.nombre + ' vispera ' + DIAS_CORTO[d] + ':' + (turno(c.t)||{}).corto);
+             if(ay  && ay.t  === LIBRE) l.push(e.nombre + ' vuelta '  + DIAS_CORTO[d] + ':' + (turno(c.t)||{}).corto);
+           }
+         }
+         return l.join('  ') || 'nadie libra esta semana';
+       })());
+
     ok('Con los descansos puestos, los dos principales siguen cubiertos todos los dias',
        (() => { for(let d = 0; d < 7; d++)
                   if(turnosServicioDia(d, ks).filter(x => x.clave).length < nucleoServicioDia(d)) return false;
@@ -10293,6 +10452,155 @@ function pruebas(){
     SEMANA = guardaSem;
     delete S.semanas[kc];
     limpiar();
+  })();
+
+  /* =================================================================
+     EL TURNO DE ANTES Y EL DE DESPUES DEL DESCANSO
+     La vispera del dia libre se entra en el primer turno del dia -el 7-3-
+     y el dia de vuelta en el ultimo -el 3-11-.
+
+     Se mide la puntuacion directamente y no armando semanas: armar tres
+     semanas dentro de las pruebas se llevaba mas de medio minuto, y lo
+     que hay que comprobar es que la regla empuja hacia el turno correcto.
+     ================================================================= */
+  (function(){
+    const t73  = turno(T['7-3']), t311 = turno(T['3-11']);
+    if(!t73 || !t311) return;
+    const pA = P['A - Hertz'];
+
+    ok('El primer y el ultimo turno del dia son el 7-3 y el 3-11',
+       (() => { const ext = extremosDelDia(1, k);
+         return ext.pronto === min2(t73.inicio) && ext.tarde === min2(t311.inicio); })(),
+       (() => { const ext = extremosDelDia(1, k);
+         const nom = (m) => { const x = turnosActivos().find(y => min2(y.inicio) === m); return x ? x.corto : m; };
+         return 'entra primero el ' + nom(ext.pronto) + ' y ultimo el ' + nom(ext.tarde); })());
+
+    /* Un empleado normal, con el martes de trabajo entre un lunes libre y
+       un miercoles libre segun el caso. Se puntua el mismo dia con los dos
+       turnos y se compara. */
+    const e = E.find(x => !entrenando(x) && x.libreFijo < 0);
+    const puntos = (celdas, turnoX) => {
+      const ctx = ctxCopia(k, celdas);
+      delete e._hist;
+      return puntuarCandidato(ctx, e, 1, turnoX, pA, { equilibrio:1, preferencias:1 });
+    };
+    const libreEl = (dia) => { const c = {}; c[ck(e.id, dia)] = { t:LIBRE, p:null, o:'auto', b:false }; return c; };
+
+    ok('Si manana libra, el 7-3 puntua mas que el 3-11',
+       (() => {
+         if(!e) return true;
+         const c = libreEl(2);                      // miercoles libre, martes es la vispera
+         return puntos(c, t73) > puntos(c, t311);
+       })(),
+       e ? e.nombre + ': ' + Math.round(puntos(libreEl(2), t73)) + ' contra ' + Math.round(puntos(libreEl(2), t311)) : '');
+
+    ok('Si ayer libro, el 3-11 puntua mas que el 7-3',
+       (() => {
+         if(!e) return true;
+         const c = libreEl(0);                      // lunes libre, martes es la vuelta
+         return puntos(c, t311) > puntos(c, t73);
+       })(),
+       e ? e.nombre + ': ' + Math.round(puntos(libreEl(0), t311)) + ' contra ' + Math.round(puntos(libreEl(0), t73)) : '');
+
+    ok('Entre dos dias libres la regla no empuja a ningun lado',
+       (() => {
+         if(!e) return true;
+         /* lunes y miercoles libres: el martes es vispera Y vuelta a la vez,
+            asi que la regla se contradice y no debe inclinar la balanza */
+         const c = {};
+         c[ck(e.id, 0)] = { t:LIBRE, p:null, o:'auto', b:false };
+         c[ck(e.id, 2)] = { t:LIBRE, p:null, o:'auto', b:false };
+         return Math.abs(puntos(c, t73) - puntos(c, t311)) < 900;
+       })());
+
+    ok('Quien esta en entrenamiento se queda fuera de esa regla',
+       (() => {
+         const ent = E.find(x => entrenando(x));
+         if(!ent) return true;
+         const c = libreEl2(ent, 2);
+         const ctx = ctxCopia(k, c);
+         delete ent._hist;
+         const a = puntuarCandidato(ctx, ent, 1, t73,  pA, { equilibrio:1, preferencias:1 });
+         const b = puntuarCandidato(ctx, ent, 1, t311, pA, { equilibrio:1, preferencias:1 });
+         return Math.abs(a - b) < 900;              // sin el empujon de 2000
+       })(),
+       (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
+
+    function libreEl2(quien, dia){ const c = {}; c[ck(quien.id, dia)] = { t:LIBRE, p:null, o:'auto', b:false }; return c; }
+  })();
+
+  /* =================================================================
+     EL REPARTO DE DOS-Y-UNO
+     El interruptor de Ajustes: todos libran dos dias seguidos una semana
+     y uno la siguiente, incluida la persona en entrenamiento. Se mide
+     sobre las cuentas y no armando semanas, que eso tarda demasiado para
+     una prueba; que el reparto de verdad cuadra esta comprobado aparte.
+     ================================================================= */
+  (function(){
+    const guarda = S.config.modoDosUno, guardaDes = S.config.modoDosUnoDesfase;
+    const limpiar = () => { olvidarLibres(); olvidarRefuerzos(); olvidarObjetivoTipo(); };
+
+    /* --- apagado: como toda la vida --- */
+    S.config.modoDosUno = false; limpiar();
+    ok('Con el reparto de dos-y-uno apagado, solo una persona libra dos dias',
+       E.filter(e => libresSemana(e.id, k) === 2 && !e.dosLibresFijos).length <= 1,
+       E.map(e => e.nombre + ':' + libresSemana(e.id, k)).join(' '));
+
+    /* --- encendido --- */
+    S.config.modoDosUno = true; S.config.modoDosUnoDesfase = 0; limpiar();
+    const kDos = semanaDeDos(k) ? k : addDias(k, 7);
+    const kUno = semanaDeDos(k) ? addDias(k, 7) : k;
+
+    ok('Encendido, en la semana de dos libran DOS dias TODOS',
+       E.every(e => libresSemana(e.id, kDos) === 2),
+       E.map(e => e.nombre + ':' + libresSemana(e.id, kDos)).join(' '));
+    ok('Y en la siguiente libran uno TODOS',
+       E.every(e => libresSemana(e.id, kUno) === 1),
+       E.map(e => e.nombre + ':' + libresSemana(e.id, kUno)).join(' '));
+    ok('Quien esta en entrenamiento tambien entra en el reparto de dos-y-uno',
+       (() => {
+         const ent = E.find(x => entrenando(x));
+         if(!ent) return true;
+         return libresSemana(ent.id, kDos) === 2 && libresSemana(ent.id, kUno) === 1;
+       })(),
+       (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
+    ok('Las semanas van alternando dos, uno, dos, uno',
+       (() => {
+         const v = [];
+         for(let i = 0; i < 6; i++) v.push(semanaDeDos(addDias(k, 7*i)) ? 2 : 1);
+         for(let i = 1; i < v.length; i++) if(v[i] === v[i-1]) return false;
+         return true;
+       })(),
+       (() => { const v = [];
+         for(let i = 0; i < 6; i++) v.push(semanaDeDos(addDias(k, 7*i)) ? '2' : '1');
+         return v.join(' - '); })());
+    ok('El boton "Empezar al reves" le da la vuelta a la alternancia',
+       (() => {
+         const antes = semanaDeDos(k);
+         S.config.modoDosUnoDesfase = 1; limpiar();
+         const luego = semanaDeDos(k);
+         S.config.modoDosUnoDesfase = 0; limpiar();
+         return antes !== luego;
+       })());
+    ok('Con cuatro personas o menos el reparto de dos-y-uno se apaga solo',
+       (() => {
+         const rot = S.empleados.filter(x => equipoDe(x) === 'rotativo');
+         if(rot.length < 5) return true;
+         const guardaAct = rot.map(x => x.activo);
+         rot.forEach((x, i) => x.activo = i < 4);          // solo cuatro
+         limpiar();
+         const todosUno = activos().every(x => libresSemana(x.id, kDos) === 1);
+         rot.forEach((x, i) => x.activo = guardaAct[i]);
+         limpiar();
+         return todosUno;
+       })(),
+       'con cuatro no hay margen ni para el primer dia');
+
+    /* se deja como estaba */
+    S.config.modoDosUno = guarda; S.config.modoDosUnoDesfase = guardaDes;
+    limpiar();
+    ok('El interruptor queda como estaba despues de probarlo',
+       S.config.modoDosUno === guarda);
   })();
 
   ok('El color de la marca se convierte bien en sus tres tonos',
