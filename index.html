@@ -2167,14 +2167,24 @@ function olvidarLibres(){ _libresCache = { k:null, firma:null, val:null }; }
    semana, uno la siguiente, dos la otra, y asi. Nadie queda fuera, ni
    siquiera quien esta en entrenamiento.
 
-   Con siete personas la cuenta cierra por los dos lados:
-     - Semana de dos: 7 x 2 = 14 descansos en 7 dias, o sea 2 por dia.
-       Quedan 5 trabajando y se abren 5 puestos: los 4 principales y uno de
-       relleno. Y las siete parejas de dias seguidos (lunes-martes,
-       martes-miercoles... domingo-lunes) tapan cada dia exactamente dos
-       veces, que es justo lo que hace falta.
-     - Semana de uno: 7 descansos en 7 dias, uno por dia. Quedan 6
-       trabajando y se abren 6 puestos.
+   No libran dos dias TODOS a la vez: eso dejaba una semana con catorce
+   descansos y la siguiente con siete, y la plantilla del mostrador daba
+   tumbos de una semana a otra. Se reparte por mitades:
+
+     - Cada semana, la MITAD de la gente libra dos dias seguidos y la otra
+       mitad libra uno.
+     - A la semana siguiente se cambian los papeles.
+
+   Asi cada persona alterna dos, uno, dos, uno -que es lo que se pedia- y
+   ademas todas las semanas trabaja mas o menos la misma gente. Con siete
+   personas salen 4 y 3 una semana, 3 y 4 la siguiente. Con un numero par,
+   mitad y mitad exactas.
+
+   Con siete personas la cuenta sale asi:
+     - Semana de 4 con dos y 3 con uno: 4x2 + 3x1 = 11 descansos en 7 dias.
+     - Semana de 3 con dos y 4 con uno: 3x2 + 4x1 = 10 descansos.
+   Entre uno y dos descansos por dia, o sea 5 o 6 trabajando: de sobra
+   para los cuatro principales y un relleno.
 
    Se enciende en Ajustes y se apaga igual. Todo lo demas sigue mandando:
    los cuatro principales, los dos dias seguidos de verdad, el descanso
@@ -2185,11 +2195,19 @@ function olvidarLibres(){ _libresCache = { k:null, firma:null, val:null }; }
    primer dia de descanso, y menos para el segundo.
    ===================================================================== */
 function modoDosUno(){ return !!(S.config && S.config.modoDosUno); }
-/* ¿A esta semana le tocan dos dias libres o uno? */
-function semanaDeDos(k){
-  k = k || SEMANA;
+/* A quien le tocan los dos dias seguidos esta semana.
+   Se alterna por la posicion en la plantilla y por la semana: los pares
+   una semana y los impares la siguiente. No hace falta sortear nada: asi
+   cada persona alterna sin fallo y la mitad sale exacta. */
+function leTocanDosLibres(empId, k){
+  const i = activos().findIndex(e => e.id === empId);
+  if(i < 0) return false;
   const des = (S.config && S.config.modoDosUnoDesfase) ? 1 : 0;
-  return (((semanasAbsolutas(k) + des) % 2) + 2) % 2 === 0;
+  return (((i + semanasAbsolutas(k || SEMANA) + des) % 2) + 2) % 2 === 0;
+}
+/* Cuantos llevan dos dias esta semana, para poder contarlo en pantalla */
+function cuantosConDosLibres(k){
+  return activos().filter(e => leTocanDosLibres(e.id, k)).length;
 }
 function libresPorPersona(k){
   k = k || SEMANA;
@@ -2201,17 +2219,17 @@ function libresPorPersona(k){
   emps.forEach(e => { if(diasAusente(e.id, k).length < 7) disponibles++; });
   const corta = disponibles <= PLANTILLA_CORTA;
   const dosUno = modoDosUno() && !corta;
-  const semDos = dosUno && semanaDeDos(k);
   const firma = emps.map(e => e.id + ':' + diasAusente(e.id, k).length +
                               (e.dosLibresFijos ? 'F' : '')).join(',') + '|' + (turno2 || '-') +
-                (corta ? '|c' : '') + (dosUno ? (semDos ? '|d2' : '|d1') : '');
+                (corta ? '|c' : '') +
+                (dosUno ? '|d' + emps.map(e => leTocanDosLibres(e.id, k) ? 2 : 1).join('') : '');
   if(_libresCache.k === k && _libresCache.firma === firma) return _libresCache.val;
 
   const info = emps.map(e => {
     const fuera = diasAusente(e.id, k).length;
-    /* En el reparto de dos-y-uno todos llevan lo mismo esa semana */
+    /* En el reparto de dos-y-uno, la mitad lleva dos y la otra mitad uno */
     const suyos = corta ? 1
-                : dosUno ? (semDos ? 2 : 1)
+                : dosUno ? (leTocanDosLibres(e.id, k) ? 2 : 1)
                 : (e.dosLibresFijos ? 2 : (turno2 === e.id ? 2 : 1));
     /* A quien tiene dia libre fijo en su ficha no se le puede recortar por
        debajo de ese dia: va a librarlo igual, y si aqui pusiera cero la
@@ -2259,7 +2277,7 @@ function libresSemana(empId, k){
   /* alguien que no esta en la plantilla activa del counter */
   const e = empleado(empId);
   const fuera = diasAusente(empId, k).length;
-  const suyos = modoDosUno() ? (semanaDeDos(k) ? 2 : 1)
+  const suyos = modoDosUno() ? (leTocanDosLibres(empId, k) ? 2 : 1)
               : ((e && e.dosLibresFijos) ? 2 : (turnoDosLibres(k) === empId ? 2 : 1));
   return Math.max(0, Math.min(suyos, 7 - fuera));
 }
@@ -6231,21 +6249,20 @@ function historialDe(id){
    Se ve la vuelta entera: quien va antes, quien va despues y en que
    semana le toca a cada uno. El orden se cambia con las flechas.
    ===================================================================== */
-/* Le da la vuelta a que semana lleva dos dias y cual uno */
+/* Cambia que mitad de la plantilla lleva los dos dias esta semana */
 function cambiarSemanaDosUno(){
   S.config.modoDosUnoDesfase = S.config.modoDosUnoDesfase ? 0 : 1;
-  bitacora('Cambio el arranque del reparto de dos-y-uno: ahora esta semana lleva ' +
-           (semanaDeDos(SEMANA) ? 'dos dias libres' : 'un dia libre') + '.');
+  bitacora('Se cambio que mitad lleva los dos dias libres esta semana en agentes de renta.');
   priTocar('');
-  toast('Esta semana pasa a ' + (semanaDeDos(SEMANA) ? '2 dias libres' : '1 dia libre'));
+  toast('Cambiada la mitad que libra dos dias');
 }
 /* Enciende o apaga el reparto de dos-y-uno */
 function ponerModoDosUno(v){
   S.config.modoDosUno = !!v;
-  bitacora(v ? 'Se encendio el reparto de dos-y-uno en agentes de renta: todos libran dos dias una semana y uno la siguiente.'
-             : 'Se apago el reparto de dos-y-uno: vuelve el turno de dos dias seguidos por rotacion.');
+  bitacora(v ? 'Se encendio el reparto por mitades en agentes de renta: media plantilla libra dos dias y la otra media uno, y se cambian cada semana.'
+             : 'Se apago el reparto por mitades: vuelve el turno de dos dias seguidos por rotacion.');
   priTocar('');
-  toast(v ? 'Reparto de dos-y-uno encendido' : 'Vuelve el reparto de siempre');
+  toast(v ? 'Reparto por mitades encendido' : 'Vuelve el reparto de siempre');
 }
 
 function ajustesRotacion(){
@@ -6262,32 +6279,37 @@ function ajustesRotacion(){
      que poder ver las dos y cambiar de una a otra sin buscar nada.
      ================================================================= */
   h += '<label class="chk" style="font-size:14.5px"><input type="checkbox"' + (dosUno ? ' checked' : '') +
-       ' onchange="ponerModoDosUno(this.checked)"> <b>Todos libran 2 dias una semana y 1 la siguiente</b></label>' +
-       '<p class="tiny muted" style="margin:-2px 0 10px">Con la casilla marcada, <b>todas</b> las personas ' +
-       '&mdash;incluida la que este en entrenamiento&mdash; libran dos dias seguidos una semana, uno la ' +
-       'siguiente, dos la otra, y asi. Sin marcar, se reparte como siempre: dos dias seguidos para una sola ' +
-       'persona por semana, por turno riguroso.</p>';
+       ' onchange="ponerModoDosUno(this.checked)"> <b>Media plantilla libra 2 dias y la otra media 1, y se cambian cada semana</b></label>' +
+       '<p class="tiny muted" style="margin:-2px 0 10px">Con la casilla marcada, cada semana <b>la mitad</b> de la gente ' +
+       '&mdash;incluida la que este en entrenamiento&mdash; libra dos dias seguidos y la otra mitad libra uno. ' +
+       'A la semana siguiente se cambian, asi que cada persona alterna dos, uno, dos, uno. ' +
+       'Sin marcar, se reparte como siempre: dos dias seguidos para una sola persona por semana, por turno riguroso.</p>';
 
   if(dosUno){
-    const dos = semanaDeDos(k);
     const cuenta = activos().length;
-    h += '<div class="alert ok" style="margin-bottom:10px"><b>Reparto de dos-y-uno encendido</b>' +
-      'Esta semana (' + fechaCorta(k) + ') <b>todos libran ' + (dos ? '2 dias seguidos' : '1 dia') + '</b>, ' +
-      'y la que viene, ' + (dos ? '1 dia' : '2 dias seguidos') + '.</div>';
-    h += '<table class="data"><thead><tr><th>Semana</th><th>Cuantos dias libra cada uno</th><th>Trabajan al dia</th></tr></thead><tbody>';
+    const conDos = activos().filter(e => leTocanDosLibres(e.id, k));
+    const conUno = activos().filter(e => !leTocanDosLibres(e.id, k));
+    h += '<div class="alert ok" style="margin-bottom:10px"><b>Reparto por mitades encendido</b>' +
+      'Esta semana (' + fechaCorta(k) + ') libran <b>2 dias seguidos</b>: ' +
+      (conDos.length ? esc(conDos.map(e => e.nombre).join(', ')) : 'nadie') + '. ' +
+      'Y <b>1 dia</b>: ' + (conUno.length ? esc(conUno.map(e => e.nombre).join(', ')) : 'nadie') + '. ' +
+      'La semana que viene se cambian.</div>';
+    h += '<table class="data"><thead><tr><th>Semana</th><th>Libran 2 dias seguidos</th><th>Libran 1 dia</th></tr></thead><tbody>';
     for(let i = 0; i < 6; i++){
       const kk = addDias(k, 7*i);
-      const d2 = semanaDeDos(kk);
+      const dos2 = activos().filter(e => leTocanDosLibres(e.id, kk)).map(e => e.nombre);
+      const uno2 = activos().filter(e => !leTocanDosLibres(e.id, kk)).map(e => e.nombre);
       h += '<tr' + (i === 0 ? ' style="background:var(--ok-bg)"' : '') + '>' +
-        '<td><b>' + fechaCorta(kk) + '</b> al ' + fechaCorta(addDias(kk,6)) + (i === 0 ? ' <span class="pill ok">esta</span>' : '') + '</td>' +
-        '<td>' + (d2 ? '<b>2 dias seguidos</b>' : '1 dia') + '</td>' +
-        '<td class="tiny muted">' + Math.max(0, cuenta - (d2 ? 2 : 1)) + ' de ' + cuenta + '</td></tr>';
+        '<td><b>' + fechaCorta(kk) + '</b>' + (i === 0 ? ' <span class="pill ok">esta</span>' : '') + '</td>' +
+        '<td><b>' + dos2.length + '</b> <span class="tiny muted">' + esc(dos2.join(', ')) + '</span></td>' +
+        '<td>' + uno2.length + ' <span class="tiny muted">' + esc(uno2.join(', ')) + '</span></td></tr>';
     }
     h += '</tbody></table>';
-    h += '<button class="btn sec sm" style="margin-top:8px" onclick="cambiarSemanaDosUno()">Empezar al reves</button>' +
-         '<span class="tiny muted" style="margin-left:8px">Por si esta semana deberia ser la de ' +
-         (semanaDeDos(k) ? '1 dia' : '2 dias') + '.</span>';
-    h += '<p class="tiny muted" style="margin:12px 0 0">Todo lo demas sigue igual: los cuatro puestos principales, ' +
+    h += '<button class="btn sec sm" style="margin-top:8px" onclick="cambiarSemanaDosUno()">Cambiar las mitades</button>' +
+         '<span class="tiny muted" style="margin-left:8px">Por si esta semana los dos dias deberian ser para los otros.</span>';
+    h += '<p class="tiny muted" style="margin:12px 0 0">Con ' + cuenta + ' personas salen ' +
+         Math.ceil(cuenta/2) + ' y ' + Math.floor(cuenta/2) + ', y a la semana siguiente al reves. ' +
+         'Todo lo demas sigue igual: los cuatro puestos principales, ' +
          'los dos dias de descanso siempre seguidos, el 7-3 la vispera y el 3-11 la vuelta, ' +
          'el descanso minimo entre turnos y los siete dias seguidos como maximo. ' +
          'Con cuatro personas o menos este reparto se apaga solo, porque no hay margen.</p>';
@@ -10548,48 +10570,62 @@ function pruebas(){
 
     /* --- encendido --- */
     S.config.modoDosUno = true; S.config.modoDosUnoDesfase = 0; limpiar();
-    const kDos = semanaDeDos(k) ? k : addDias(k, 7);
-    const kUno = semanaDeDos(k) ? addDias(k, 7) : k;
+    const nAct = activos().length;
 
-    ok('Encendido, en la semana de dos libran DOS dias TODOS',
-       E.every(e => libresSemana(e.id, kDos) === 2),
-       E.map(e => e.nombre + ':' + libresSemana(e.id, kDos)).join(' '));
-    ok('Y en la siguiente libran uno TODOS',
-       E.every(e => libresSemana(e.id, kUno) === 1),
-       E.map(e => e.nombre + ':' + libresSemana(e.id, kUno)).join(' '));
-    ok('Quien esta en entrenamiento tambien entra en el reparto de dos-y-uno',
+    ok('Encendido, la mitad libra dos dias y la otra mitad uno',
+       (() => {
+         const dos = E.filter(e => libresSemana(e.id, k) === 2).length;
+         return dos === Math.ceil(nAct/2) || dos === Math.floor(nAct/2);
+       })(),
+       E.map(e => e.nombre + ':' + libresSemana(e.id, k)).join(' '));
+    ok('Cada persona alterna dos, uno, dos, uno semana tras semana',
+       E.every(e => {
+         const v = [];
+         for(let i = 0; i < 6; i++) v.push(libresSemana(e.id, addDias(k, 7*i)));
+         for(let i = 1; i < v.length; i++) if(v[i] === v[i-1]) return false;
+         return true;
+       }),
+       (() => { const e = E[0]; const v = [];
+         for(let i = 0; i < 6; i++) v.push(libresSemana(e.id, addDias(k, 7*i)));
+         return e.nombre + ': ' + v.join(' - '); })());
+    ok('En dos semanas seguidas todos descansan lo mismo: tres dias',
+       E.every(e => libresSemana(e.id, k) + libresSemana(e.id, addDias(k, 7)) === 3),
+       E.map(e => e.nombre + ':' + (libresSemana(e.id, k) + libresSemana(e.id, addDias(k,7)))).join(' '));
+    ok('Quien esta en entrenamiento tambien entra en el reparto',
        (() => {
          const ent = E.find(x => entrenando(x));
          if(!ent) return true;
-         return libresSemana(ent.id, kDos) === 2 && libresSemana(ent.id, kUno) === 1;
+         return libresSemana(ent.id, k) + libresSemana(ent.id, addDias(k, 7)) === 3;
        })(),
        (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
-    ok('Las semanas van alternando dos, uno, dos, uno',
+    ok('Las mitades se cambian de una semana a la siguiente',
        (() => {
-         const v = [];
-         for(let i = 0; i < 6; i++) v.push(semanaDeDos(addDias(k, 7*i)) ? 2 : 1);
-         for(let i = 1; i < v.length; i++) if(v[i] === v[i-1]) return false;
-         return true;
+         const a = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.id).sort().join();
+         const b = activos().filter(e => leTocanDosLibres(e.id, addDias(k, 7))).map(e => e.id).sort().join();
+         return a !== b;
        })(),
-       (() => { const v = [];
-         for(let i = 0; i < 6; i++) v.push(semanaDeDos(addDias(k, 7*i)) ? '2' : '1');
-         return v.join(' - '); })());
-    ok('El boton "Empezar al reves" le da la vuelta a la alternancia',
        (() => {
-         const antes = semanaDeDos(k);
+         const a = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.nombre);
+         const b = activos().filter(e => leTocanDosLibres(e.id, addDias(k, 7))).map(e => e.nombre);
+         return '[' + a.join(', ') + ']  luego  [' + b.join(', ') + ']';
+       })());
+    ok('El boton de cambiar las mitades las intercambia',
+       (() => {
+         const antes = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.id).sort().join();
          S.config.modoDosUnoDesfase = 1; limpiar();
-         const luego = semanaDeDos(k);
+         const luego = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.id).sort().join();
          S.config.modoDosUnoDesfase = 0; limpiar();
          return antes !== luego;
        })());
-    ok('Con cuatro personas o menos el reparto de dos-y-uno se apaga solo',
+    ok('Con cuatro personas o menos el reparto por mitades se apaga solo',
        (() => {
          const rot = S.empleados.filter(x => equipoDe(x) === 'rotativo');
          if(rot.length < 5) return true;
          const guardaAct = rot.map(x => x.activo);
          rot.forEach((x, i) => x.activo = i < 4);          // solo cuatro
          limpiar();
-         const todosUno = activos().every(x => libresSemana(x.id, kDos) === 1);
+         const todosUno = activos().every(x => libresSemana(x.id, k) === 1) &&
+                          activos().every(x => libresSemana(x.id, addDias(k, 7)) === 1);
          rot.forEach((x, i) => x.activo = guardaAct[i]);
          limpiar();
          return todosUno;
