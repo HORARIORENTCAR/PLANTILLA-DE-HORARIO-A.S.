@@ -6633,6 +6633,11 @@ function pantallaAjustes(){
        '<button class="btn sec" onclick="el(\'fileimp\').click()">Restaurar desde copia</button>' +
        '<input type="file" id="fileimp" accept=".json" class="hidden" onchange="importarDatos(this)">' +
        '<button class="btn bad" onclick="reiniciar()">Borrar todo y empezar de nuevo</button></div></div>';
+
+  h += '<p class="tiny muted" style="margin:14px 0 0;text-align:center">Version de la aplicacion: <b>' +
+       esc(SELLO_VERSION) + '</b>' +
+       '<br>Si en el telefono sale una version mas vieja que en la computadora, cierra la aplicacion ' +
+       'del todo y vuelve a abrirla.</p>';
   return h;
 }
 
@@ -8111,6 +8116,15 @@ function pantallaHorario(){
    La tabla de la semana no desaparece: esta a un boton de distancia, y
    en el ordenador sigue siendo lo primero que se ve.
    ===================================================================== */
+/* =====================================================================
+   EL SELLO DE LA VERSION
+   Se cambia a mano en cada publicacion. Sirve para una pregunta muy
+   concreta y muy repetida: "¿este telefono ya cogio la actualizacion o
+   sigue con una copia vieja?". Sin un sello a la vista no hay forma de
+   saberlo, y se pierde media tarde buscando el fallo donde no esta.
+   ===================================================================== */
+const SELLO_VERSION = '2026-08-23-b';
+
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
    Hace falta distinguirlo: lo que elige la persona se respeta, y lo que
@@ -10945,8 +10959,29 @@ else inicio();
    archivo suelto con doble clic esto no aplica y se salta sin ruido.
    ===================================================================== */
 if('serviceWorker' in navigator && location.protocol.indexOf('http') === 0){
+  /* Si ya habia un trabajador mandando, es que la aplicacion ya estaba
+     instalada: entonces un relevo significa "llego una version nueva" y
+     hay que recargar. La primera vez no, que ahi el relevo es la propia
+     instalacion y recargar seria un susto sin motivo. */
+  const habiaTrabajador = !!navigator.serviceWorker.controller;
+  let recargando = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if(!habiaTrabajador || recargando) return;
+    recargando = true;
+    location.reload();
+  });
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('sw.js').catch(function(){});
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      /* Buscar version nueva al abrir y cada vez que se vuelve a la
+         aplicacion. En el telefono esto no se cierra, se deja en segundo
+         plano, y sin este repaso podia pasar dias con la version vieja. */
+      const mirar = function(){ try { reg.update(); } catch(e){} };
+      mirar();
+      document.addEventListener('visibilitychange', function(){
+        if(!document.hidden) mirar();
+      });
+      window.addEventListener('focus', mirar);
+    }).catch(function(){});
   });
 }
 
