@@ -249,18 +249,47 @@ td.cell.feriado{background:#fdfaf3}
 .chip.nodisp{background:repeating-linear-gradient(45deg,#f7f8fa,#f7f8fa 6px,#eef0f4 6px,#eef0f4 12px);
   color:var(--soft);font-weight:600;font-size:11px;box-shadow:inset 0 0 0 1px var(--line)}
 .chip.nodisp::before{display:none}
-/* Vacaciones, licencia o permiso: se distingue de un dia libre normal */
+/* Vacaciones, licencia o permiso: se distingue de un dia libre normal.
+   Las rayas son lo que dicen "esta persona no esta", y por eso las llevan
+   los cuatro motivos. El color es lo que dice CUAL de los cuatro: unas
+   vacaciones y una licencia medica no se leen igual, y en una tabla de
+   siete columnas hay que poder distinguirlas sin pararse a leer.
+   Los cuatro salen de la paleta que ya usa el resto de la aplicacion, que
+   si no cada pantalla acabaria con su propio verde y su propio rojo. */
 .chip.ausente{background:repeating-linear-gradient(45deg,#fdf6e8,#fdf6e8 7px,#f8eed6 7px,#f8eed6 14px);
   color:var(--warn);font-weight:700;font-size:11.5px;letter-spacing:0;
   box-shadow:inset 0 0 0 1px var(--warn-line);cursor:pointer}
 .chip.ausente::before{background:var(--warn);width:4px}
 .chip.ausente .h{color:var(--warn);opacity:.8}
+/* vacaciones: verde, es un descanso previsto y ganado */
+.chip.ausente.vacaciones{background:repeating-linear-gradient(45deg,#ecf6f2,#ecf6f2 7px,#d9e9e2 7px,#d9e9e2 14px);
+  color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok-line)}
+.chip.ausente.vacaciones::before{background:var(--ok)}
+.chip.ausente.vacaciones .h{color:var(--ok)}
+/* permiso: azul, es un rato concedido y se acaba pronto */
+.chip.ausente.permiso{background:repeating-linear-gradient(45deg,#eff4f9,#eff4f9 7px,#dbe7f1 7px,#dbe7f1 14px);
+  color:var(--info);box-shadow:inset 0 0 0 1px var(--info-line)}
+.chip.ausente.permiso::before{background:var(--info)}
+.chip.ausente.permiso .h{color:var(--info)}
+/* licencia medica: rojo apagado, es la que hay que mirar de cerca */
+.chip.ausente.medica{background:repeating-linear-gradient(45deg,#fcefed,#fcefed 7px,#f6dedb 7px,#f6dedb 14px);
+  color:var(--bad);box-shadow:inset 0 0 0 1px var(--bad-line)}
+.chip.ausente.medica::before{background:var(--bad)}
+.chip.ausente.medica .h{color:var(--bad)}
+/* 'otro' se queda con el ambar de arriba, que es el color de "algo pasa" */
 td.cell:hover .chip.vacio{color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand-line)}
 .chip.conflicto{box-shadow:inset 0 0 0 2px var(--bad)}
 .chip.drag{opacity:.35}
 td.cell.dropok{background:var(--ok-bg) !important}
 .leyenda{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--soft);margin-top:9px;align-items:center}
 .leyenda i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+/* La muestra de una ausencia va rayada igual que la casilla, que el color
+   solo no basta para reconocerla de un vistazo. */
+.uni i.rayas{width:13px;border-radius:2px}
+i.rayas.vacaciones{background:repeating-linear-gradient(45deg,#ecf6f2,#ecf6f2 3px,var(--ok) 3px,var(--ok) 6px)}
+i.rayas.permiso{background:repeating-linear-gradient(45deg,#eff4f9,#eff4f9 3px,var(--info) 3px,var(--info) 6px)}
+i.rayas.medica{background:repeating-linear-gradient(45deg,#fcefed,#fcefed 3px,var(--bad) 3px,var(--bad) 6px)}
+i.rayas.otro{background:repeating-linear-gradient(45deg,#fdf6e8,#fdf6e8 3px,var(--warn) 3px,var(--warn) 6px)}
 
 /* ---------- Etiqueta de terminal y marca ---------- */
 .uni{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:3px 10px 3px 8px;
@@ -1100,6 +1129,7 @@ function datosDemo(){
          "DOS SEMANAS, DOS DESCANSOS" mas abajo. */
       modoDosUno: false,
       modoDosUnoDesfase: 0,
+      modoDosUnoSemilla: 7,      // de que sorteo salen los dos grupos
       prioridad: prioridadInicial(puestos, turnos),
       supervision: supervisionInicial(turnos, empleados),
       servicio: { cobertura: coberturaServicioInicial(turnos),
@@ -1162,6 +1192,7 @@ function sanear(){
   /* El interruptor del reparto de dos-y-uno */
   S.config.modoDosUno = !!S.config.modoDosUno;
   S.config.modoDosUnoDesfase = S.config.modoDosUnoDesfase ? 1 : 0;
+  if(!(S.config.modoDosUnoSemilla > 0)) S.config.modoDosUnoSemilla = 7;
   if(!S.config.semanaRef) S.config.semanaRef = lunesDe(hoyISO());
   if(!S.nube || typeof S.nube !== 'object') S.nube = { url:'', clave:'', activa:false, id:'principal', ultima:null };
   if(!Array.isArray(S.turnos) || !S.turnos.length) S.turnos = turnosIniciales();
@@ -1983,6 +2014,23 @@ function diasAusente(empId, k){
   return out;
 }
 function ausenteTodaLaSemana(empId, k){ return diasAusente(empId, k).length === 7; }
+/* Que motivos de ausencia salen en la semana que se esta viendo. Sirve
+   para poner en la leyenda solo los colores que de verdad estan en la
+   tabla: una leyenda con cuatro cosas de las que no se ve ninguna estorba
+   mas que ayuda. */
+function motivosDeLaSemana(k){
+  k = k || SEMANA;
+  const vistos = [];
+  activos().forEach(e => {
+    for(let d = 0; d < 7; d++){
+      const a = ausenciaEn(e.id, addDias(k, d));
+      if(!a) continue;
+      const t = TIPOS_AUSENCIA[a.tipo] ? a.tipo : 'otro';
+      if(vistos.indexOf(t) < 0) vistos.push(t);
+    }
+  });
+  return Object.keys(TIPOS_AUSENCIA).filter(t => vistos.indexOf(t) >= 0);
+}
 /* En la casilla, una ausencia se guarda como un dia sin turno con una
    marca encima. Asi todo lo que ya preguntaba "¿trabaja o no?" sigue
    valiendo, y lo unico que hay que afinar es donde se cuentan los dias
@@ -2167,22 +2215,18 @@ function olvidarLibres(){ _libresCache = { k:null, firma:null, val:null }; }
    semana, uno la siguiente, dos la otra, y asi. Nadie queda fuera, ni
    siquiera quien esta en entrenamiento.
 
-   No libran dos dias TODOS a la vez: eso dejaba una semana con catorce
-   descansos y la siguiente con siete, y la plantilla del mostrador daba
-   tumbos de una semana a otra. Se reparte por mitades:
+   La plantilla se parte en DOS GRUPOS sorteados. Una semana el primer
+   grupo libra dos dias seguidos y el segundo libra uno; a la semana
+   siguiente se cambian. Asi nunca libran dos dias todos a la vez -que
+   dejaba una semana con catorce descansos y la siguiente con siete, y el
+   mostrador daba tumbos- y cada persona alterna dos, uno, dos, uno.
 
-     - Cada semana, la MITAD de la gente libra dos dias seguidos y la otra
-       mitad libra uno.
-     - A la semana siguiente se cambian los papeles.
-
-   Asi cada persona alterna dos, uno, dos, uno -que es lo que se pedia- y
-   ademas todas las semanas trabaja mas o menos la misma gente. Con siete
-   personas salen 4 y 3 una semana, 3 y 4 la siguiente. Con un numero par,
-   mitad y mitad exactas.
+   Con siete personas salen 4 y 3, y se van turnando quien lleva los dos.
+   Con un numero par, mitad y mitad exactas.
 
    Con siete personas la cuenta sale asi:
-     - Semana de 4 con dos y 3 con uno: 4x2 + 3x1 = 11 descansos en 7 dias.
-     - Semana de 3 con dos y 4 con uno: 3x2 + 4x1 = 10 descansos.
+     - Semana del grupo de 4: 4x2 + 3x1 = 11 descansos en 7 dias.
+     - Semana del grupo de 3: 3x2 + 4x1 = 10 descansos.
    Entre uno y dos descansos por dia, o sea 5 o 6 trabajando: de sobra
    para los cuatro principales y un relleno.
 
@@ -2195,19 +2239,40 @@ function olvidarLibres(){ _libresCache = { k:null, firma:null, val:null }; }
    primer dia de descanso, y menos para el segundo.
    ===================================================================== */
 function modoDosUno(){ return !!(S.config && S.config.modoDosUno); }
-/* A quien le tocan los dos dias seguidos esta semana.
-   Se alterna por la posicion en la plantilla y por la semana: los pares
-   una semana y los impares la siguiente. No hace falta sortear nada: asi
-   cada persona alterna sin fallo y la mitad sale exacta. */
-function leTocanDosLibres(empId, k){
-  const i = activos().findIndex(e => e.id === empId);
-  if(i < 0) return false;
-  const des = (S.config && S.config.modoDosUnoDesfase) ? 1 : 0;
-  return (((i + semanasAbsolutas(k || SEMANA) + des) % 2) + 2) % 2 === 0;
+/* =====================================================================
+   EL SORTEO DE LOS GRUPOS
+   Sale de una semilla guardada, no de Math.random(): tiene que dar SIEMPRE
+   lo mismo. Si cambiara en cada calculo, el horario saldria distinto cada
+   vez que se rehace, dos equipos verian repartos distintos y una semana ya
+   publicada cambiaria sola. Para volver a sortear esta el boton, que
+   cambia la semilla y deja constancia.
+   ===================================================================== */
+function azarEstable(semilla){
+  let x = Math.abs((semilla | 0) * 48271) % 2147483647;
+  if(x === 0) x = 1;
+  return function(){ x = (x * 16807) % 2147483647; return (x - 1) / 2147483646; };
 }
-/* Cuantos llevan dos dias esta semana, para poder contarlo en pantalla */
-function cuantosConDosLibres(k){
-  return activos().filter(e => leTocanDosLibres(e.id, k)).length;
+function gruposDosUno(){
+  const ids = activos().map(e => e.id);
+  const rnd = azarEstable((S.config && S.config.modoDosUnoSemilla) || 7);
+  const baraja = ids.slice();
+  for(let i = baraja.length - 1; i > 0; i--){
+    const j = Math.floor(rnd() * (i + 1));
+    const t = baraja[i]; baraja[i] = baraja[j]; baraja[j] = t;
+  }
+  const mitad = Math.ceil(baraja.length / 2);
+  return { a: baraja.slice(0, mitad), b: baraja.slice(mitad) };
+}
+/* A quien le tocan los dos dias seguidos esta semana */
+function leTocanDosLibres(empId, k){
+  const g = gruposDosUno();
+  const des = (S.config && S.config.modoDosUnoDesfase) ? 1 : 0;
+  const par = (((semanasAbsolutas(k || SEMANA) + des) % 2) + 2) % 2 === 0;
+  return (par ? g.a : g.b).indexOf(empId) >= 0;
+}
+/* Los nombres de cada grupo, para poder ensenarlos */
+function nombresGrupo(ids){
+  return ids.map(id => (empleado(id) || {}).nombre || '?');
 }
 function libresPorPersona(k){
   k = k || SEMANA;
@@ -2227,7 +2292,7 @@ function libresPorPersona(k){
 
   const info = emps.map(e => {
     const fuera = diasAusente(e.id, k).length;
-    /* En el reparto de dos-y-uno, la mitad lleva dos y la otra mitad uno */
+    /* En el reparto de dos-y-uno, un grupo lleva dos y el otro uno */
     const suyos = corta ? 1
                 : dosUno ? (leTocanDosLibres(e.id, k) ? 2 : 1)
                 : (e.dosLibresFijos ? 2 : (turno2 === e.id ? 2 : 1));
@@ -6249,20 +6314,75 @@ function historialDe(id){
    Se ve la vuelta entera: quien va antes, quien va despues y en que
    semana le toca a cada uno. El orden se cambia con las flechas.
    ===================================================================== */
-/* Cambia que mitad de la plantilla lleva los dos dias esta semana */
+/* =====================================================================
+   REHACER LOS BORRADORES DEL MOSTRADOR
+   Cambiar el reparto de descansos no sirve de nada si las semanas que ya
+   estaban armadas se quedan como estaban: la casilla parece no hacer nada.
+   Se rehacen las de esta semana en adelante.
+
+   Lo publicado NO se toca, y lo puesto a mano tampoco: 'otraAlternativa'
+   arranca de 'baseManual', que conserva las casillas manuales y las
+   bloqueadas.
+
+   Va de una en una con setTimeout porque cada semana tarda un par de
+   segundos; de golpe dejaria la pantalla congelada sin explicar por que.
+   ===================================================================== */
+/* Que semanas hay que rehacer: borradores con algo dentro, de esta semana
+   en adelante. Va aparte para poder comprobarla sin armar ningun horario. */
+function borradoresDeRenta(){
+  const desde = lunesDe(hoyISO());
+  return Object.keys(S.semanas)
+    .filter(k => k >= desde && S.semanas[k].estado !== 'publicado' &&
+                 Object.keys(S.semanas[k].celdas || {}).length)
+    .sort();
+}
+function rehacerRentaProximos(){
+  const ks = borradoresDeRenta();
+  if(!ks.length) return 0;
+  toast('Rehaciendo ' + ks.length + (ks.length > 1 ? ' semanas...' : ' semana...'));
+  let i = 0;
+  (function paso(){
+    if(i >= ks.length){
+      guardar(); render();
+      toast(ks.length > 1 ? (ks.length + ' semanas rehechas con el reparto nuevo')
+                          : 'Semana rehecha con el reparto nuevo');
+      return;
+    }
+    try { otraAlternativa(ks[i]); } catch(e){}
+    i++; setTimeout(paso, 0);
+  })();
+  return ks.length;
+}
+/* Le da la vuelta a que grupo empieza con los dos dias */
 function cambiarSemanaDosUno(){
   S.config.modoDosUnoDesfase = S.config.modoDosUnoDesfase ? 0 : 1;
-  bitacora('Se cambio que mitad lleva los dos dias libres esta semana en agentes de renta.');
-  priTocar('');
-  toast('Cambiada la mitad que libra dos dias');
+  priTocar('Cambio el arranque del reparto de dos-y-uno: esta semana pasan a los dos dias los del otro grupo.');
+  if(!rehacerRentaProximos()) toast('Los grupos cambiaron de papel');
+}
+/* Vuelve a sortear quien va en cada grupo.
+   Insiste hasta que salga un reparto distinto del que habia: si diera el
+   mismo pareceria que el boton no hace nada. Con muy poca gente puede que
+   no haya otro reparto posible, y por eso el tope de intentos. */
+function sortearGruposDosUno(){
+  const antes = gruposDosUno().a.join(',');
+  const guarda = S.config.modoDosUnoSemilla;
+  for(let i = 0; i < 60; i++){
+    S.config.modoDosUnoSemilla = 1 + Math.floor(Math.random() * 900000);
+    if(gruposDosUno().a.join(',') !== antes) break;
+  }
+  if(S.config.modoDosUnoSemilla === guarda){ toast('No hay otro reparto posible'); return; }
+  const g = gruposDosUno();
+  priTocar('Se sortearon otra vez los dos grupos de dias libres. Grupo 1: ' +
+           nombresGrupo(g.a).join(', ') + '. Grupo 2: ' + nombresGrupo(g.b).join(', ') + '.');
+  if(!rehacerRentaProximos()) toast('Grupos sorteados otra vez');
 }
 /* Enciende o apaga el reparto de dos-y-uno */
 function ponerModoDosUno(v){
   S.config.modoDosUno = !!v;
-  bitacora(v ? 'Se encendio el reparto por mitades en agentes de renta: media plantilla libra dos dias y la otra media uno, y se cambian cada semana.'
-             : 'Se apago el reparto por mitades: vuelve el turno de dos dias seguidos por rotacion.');
+  bitacora(v ? 'Se encendio el reparto de dos-y-uno en agentes de renta: la plantilla se parte en dos grupos y, mientras uno libra dos dias seguidos, el otro libra uno.'
+             : 'Se apago el reparto de dos-y-uno: vuelve el turno de dos dias seguidos por rotacion.');
   priTocar('');
-  toast(v ? 'Reparto por mitades encendido' : 'Vuelve el reparto de siempre');
+  if(!rehacerRentaProximos()) toast(v ? 'Reparto de dos-y-uno encendido' : 'Vuelve el reparto de siempre');
 }
 
 function ajustesRotacion(){
@@ -6279,37 +6399,54 @@ function ajustesRotacion(){
      que poder ver las dos y cambiar de una a otra sin buscar nada.
      ================================================================= */
   h += '<label class="chk" style="font-size:14.5px"><input type="checkbox"' + (dosUno ? ' checked' : '') +
-       ' onchange="ponerModoDosUno(this.checked)"> <b>Media plantilla libra 2 dias y la otra media 1, y se cambian cada semana</b></label>' +
-       '<p class="tiny muted" style="margin:-2px 0 10px">Con la casilla marcada, cada semana <b>la mitad</b> de la gente ' +
-       '&mdash;incluida la que este en entrenamiento&mdash; libra dos dias seguidos y la otra mitad libra uno. ' +
-       'A la semana siguiente se cambian, asi que cada persona alterna dos, uno, dos, uno. ' +
-       'Sin marcar, se reparte como siempre: dos dias seguidos para una sola persona por semana, por turno riguroso.</p>';
+       ' onchange="ponerModoDosUno(this.checked)"> <b>Dos grupos: mientras uno libra 2 dias, el otro libra 1</b></label>' +
+       '<p class="tiny muted" style="margin:-2px 0 10px">Con la casilla marcada, la plantilla se parte en <b>dos ' +
+       'grupos sorteados</b> &mdash;entra todo el mundo, tambien quien este en entrenamiento&mdash;. Una semana ' +
+       'el primer grupo libra dos dias seguidos y el segundo libra uno; a la semana siguiente se cambian. Asi ' +
+       'cada persona alterna dos, uno, dos, uno, y <b>nunca libran dos dias todos a la vez</b>. Sin marcar, se ' +
+       'reparte como siempre: dos dias seguidos para una sola persona por semana, por turno riguroso.</p>';
 
   if(dosUno){
+    const g = gruposDosUno();
     const cuenta = activos().length;
-    const conDos = activos().filter(e => leTocanDosLibres(e.id, k));
-    const conUno = activos().filter(e => !leTocanDosLibres(e.id, k));
-    h += '<div class="alert ok" style="margin-bottom:10px"><b>Reparto por mitades encendido</b>' +
-      'Esta semana (' + fechaCorta(k) + ') libran <b>2 dias seguidos</b>: ' +
-      (conDos.length ? esc(conDos.map(e => e.nombre).join(', ')) : 'nadie') + '. ' +
-      'Y <b>1 dia</b>: ' + (conUno.length ? esc(conUno.map(e => e.nombre).join(', ')) : 'nadie') + '. ' +
-      'La semana que viene se cambian.</div>';
-    h += '<table class="data"><thead><tr><th>Semana</th><th>Libran 2 dias seguidos</th><th>Libran 1 dia</th></tr></thead><tbody>';
+    const primero = leTocanDosLibres(g.a[0], k);        // ¿al grupo 1 le tocan los dos esta semana?
+    const chapa = (ids, dosAhora) =>
+      '<div style="margin:0 0 6px"><span class="pill' + (dosAhora ? ' ok' : '') + '">' +
+      (dosAhora ? '2 dias' : '1 dia') + '</span> ' + esc(nombresGrupo(ids).join(', ')) + '</div>';
+
+    h += '<div class="alert ok" style="margin-bottom:10px"><b>Reparto de dos-y-uno encendido</b>' +
+      'Esta semana (' + fechaCorta(k) + ') libran <b>2 dias seguidos</b> ' +
+      esc(nombresGrupo(primero ? g.a : g.b).join(', ')) + ', y <b>1 dia</b> ' +
+      esc(nombresGrupo(primero ? g.b : g.a).join(', ')) + '. La semana que viene, al reves.</div>';
+
+    h += '<p class="tiny muted" style="margin:0 0 4px"><b>Grupo 1</b> (' + g.a.length + ') y ' +
+         '<b>grupo 2</b> (' + g.b.length + '), esta semana:</p>' +
+         chapa(g.a, primero) + chapa(g.b, !primero);
+
+    h += '<table class="data"><thead><tr><th>Semana</th><th>Libran 2 dias seguidos</th><th>Libran 1 dia</th><th>Trabajan al dia</th></tr></thead><tbody>';
     for(let i = 0; i < 6; i++){
       const kk = addDias(k, 7*i);
-      const dos2 = activos().filter(e => leTocanDosLibres(e.id, kk)).map(e => e.nombre);
-      const uno2 = activos().filter(e => !leTocanDosLibres(e.id, kk)).map(e => e.nombre);
+      const p = leTocanDosLibres(g.a[0], kk);
+      const dosN = (p ? g.a : g.b).length, unoN = (p ? g.b : g.a).length;
       h += '<tr' + (i === 0 ? ' style="background:var(--ok-bg)"' : '') + '>' +
-        '<td><b>' + fechaCorta(kk) + '</b>' + (i === 0 ? ' <span class="pill ok">esta</span>' : '') + '</td>' +
-        '<td><b>' + dos2.length + '</b> <span class="tiny muted">' + esc(dos2.join(', ')) + '</span></td>' +
-        '<td>' + uno2.length + ' <span class="tiny muted">' + esc(uno2.join(', ')) + '</span></td></tr>';
+        '<td><b>' + fechaCorta(kk) + '</b> al ' + fechaCorta(addDias(kk,6)) + (i === 0 ? ' <span class="pill ok">esta</span>' : '') + '</td>' +
+        '<td>' + esc(nombresGrupo(p ? g.a : g.b).join(', ')) + '</td>' +
+        '<td class="tiny muted">' + esc(nombresGrupo(p ? g.b : g.a).join(', ')) + '</td>' +
+        '<td class="tiny muted">' + Math.max(0, cuenta - Math.round((dosN*2 + unoN)/7)) + ' de ' + cuenta + '</td></tr>';
     }
     h += '</tbody></table>';
-    h += '<button class="btn sec sm" style="margin-top:8px" onclick="cambiarSemanaDosUno()">Cambiar las mitades</button>' +
-         '<span class="tiny muted" style="margin-left:8px">Por si esta semana los dos dias deberian ser para los otros.</span>';
-    h += '<p class="tiny muted" style="margin:12px 0 0">Con ' + cuenta + ' personas salen ' +
-         Math.ceil(cuenta/2) + ' y ' + Math.floor(cuenta/2) + ', y a la semana siguiente al reves. ' +
-         'Todo lo demas sigue igual: los cuatro puestos principales, ' +
+
+    h += '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
+         '<button class="btn sec sm" onclick="sortearGruposDosUno()">Sortear los grupos otra vez</button>' +
+         '<button class="btn sec sm" onclick="cambiarSemanaDosUno()">Empezar al reves</button></div>' +
+         '<p class="tiny muted" style="margin:6px 0 0"><b>Sortear</b> vuelve a repartir a la gente entre los dos ' +
+         'grupos, por si conviene cambiar las parejas; hazlo entre ciclos, porque a quien cambie de grupo esa ' +
+         'semana le puede tocar dos veces seguidas lo mismo. <b>Empezar al reves</b> solo intercambia los papeles ' +
+         'de esta semana, por si al grupo que libra dos le tocaba librar uno.</p>' +
+         '<p class="tiny muted" style="margin:6px 0 0">Los dos botones y la casilla <b>rehacen solos</b> los ' +
+         'borradores de esta semana en adelante, que si no se quedarian con el reparto viejo. Lo que ya esta ' +
+         '<b>publicado no se toca</b>, y lo que hayas puesto <b>a mano tampoco</b>.</p>';
+    h += '<p class="tiny muted" style="margin:12px 0 0">Todo lo demas sigue igual: los cuatro puestos principales, ' +
          'los dos dias de descanso siempre seguidos, el 7-3 la vispera y el 3-11 la vuelta, ' +
          'el descanso minimo entre turnos y los siete dias seguidos como maximo. ' +
          'Con cuatro personas o menos este reparto se apaga solo, porque no hay margen.</p>';
@@ -7942,6 +8079,8 @@ function pantallaHorario(){
        puestosActivos().map(p => uniHTML(p, p.corto + ((p.marcas||[]).length > 1
          ? ' · ' + p.marcas.join(', ') : ''))).join(' ') +
        '<span class="uni"><i style="background:var(--line)"></i>Dia libre</span>' +
+       motivosDeLaSemana().map(t =>
+         '<span class="uni"><i class="rayas ' + t + '"></i>' + esc(TIPOS_AUSENCIA[t]) + '</span>').join(' ') +
        '<span style="margin-left:6px">Momento del dia: ' +
        '<span class="tipomuestra"><i style="background:var(--t-temprano-b)"></i>temprano</span> ' +
        '<span class="tipomuestra"><i style="background:var(--t-intermedio-b)"></i>intermedio</span> ' +
@@ -7973,6 +8112,10 @@ function pantallaHorario(){
    en el ordenador sigue siendo lo primero que se ve.
    ===================================================================== */
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
+/* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
+   Hace falta distinguirlo: lo que elige la persona se respeta, y lo que
+   decidio la pantalla hay que volver a decidirlo si la pantalla cambia. */
+let VISTA_A_MANO = false;
 function pantallaAngosta(){ return document.documentElement.clientWidth < 700; }
 function modoDia(){ return DIA_MOVIL !== null && DIA_MOVIL >= 0; }
 function diaDeHoyEnLaSemana(){
@@ -7980,10 +8123,28 @@ function diaDeHoyEnLaSemana(){
   for(let d = 0; d < 7; d++) if(addDias(SEMANA, d) === hoy) return d;
   return 0;
 }
+/* Antes esto decidia UNA sola vez, la primera, y ahi se quedaba. El fallo
+   salia asi: se abria la aplicacion con la ventana estrecha -media pantalla,
+   el navegador con mucho zoom, un portatil pequeno- y se elegia la vista de
+   un dia. Al ensanchar la ventana despues, el horario seguia mostrando un
+   solo dia y la semana entera no volvia por si sola: parecia que el horario
+   no se desplegaba. Ahora, mientras nadie elija a mano, manda el ancho. */
 function decidirVista(){
-  if(DIA_MOVIL === null) DIA_MOVIL = pantallaAngosta() ? diaDeHoyEnLaSemana() : -1;
+  if(VISTA_A_MANO){ if(DIA_MOVIL === null) DIA_MOVIL = -1; return; }
+  DIA_MOVIL = pantallaAngosta() ? diaDeHoyEnLaSemana() : -1;
 }
-function verDia(d){ DIA_MOVIL = Number(d); render(); }
+function verDia(d){ DIA_MOVIL = Number(d); VISTA_A_MANO = true; render(); }
+/* Volver a dejar que mande la ventana */
+function vistaAutomatica(){ VISTA_A_MANO = false; decidirVista(); render(); }
+/* Al cambiar el tamano de la ventana solo se repinta si de verdad se cruzo
+   el limite; si no, se estaria repintando en cada pixel del arrastre. */
+let ERA_ANGOSTA = null;
+window.addEventListener('resize', function(){
+  const ahora = pantallaAngosta();
+  if(ERA_ANGOSTA === ahora) return;
+  ERA_ANGOSTA = ahora;
+  if(typeof PANTALLA !== 'undefined' && PANTALLA === 'horario') render();
+});
 function barraDiasHTML(){
   const hoy = hoyISO();
   let h = '<div class="card noprint diasmov"><div class="row" style="gap:4px;flex-wrap:nowrap;overflow-x:auto">';
@@ -7997,6 +8158,8 @@ function barraDiasHTML(){
   h += '</div><div class="row" style="margin-top:8px">' +
        '<button class="btn ' + (modoDia() ? 'sec ' : '') + 'sm" onclick="verDia(-1)">Ver la semana completa</button>' +
        (modoDia() ? '' : '<span class="tiny muted">Toca un dia para verlo en grande</span>') +
+       (VISTA_A_MANO ? '<button class="btn sec sm" onclick="vistaAutomatica()" ' +
+         'title="Que vuelva a decidirlo el tamano de la ventana">Vista automatica</button>' : '') +
        '</div></div>';
   return h;
 }
@@ -8233,7 +8396,7 @@ function chipHTML(e, d, conf){
   /* Vacaciones, licencia o permiso: no es un turno ni un dia libre */
   if(esAusencia(c)){
     const a = ausenciaEn(e.id, addDias(SEMANA, d));
-    return '<div class="chip ausente" ' +
+    return '<div class="chip ausente ' + esc(TIPOS_AUSENCIA[c.aus] ? c.aus : 'otro') + '" ' +
            'title="' + esc((a && a.nota) || '') + '">' + esc(TIPOS_AUSENCIA[c.aus] || 'Ausencia') +
            (a ? '<span class="h">al ' + fechaCorta(a.hasta) + '</span>' : '') + '</div>';
   }
@@ -10553,10 +10716,12 @@ function pruebas(){
 
   /* =================================================================
      EL REPARTO DE DOS-Y-UNO
-     El interruptor de Ajustes: todos libran dos dias seguidos una semana
-     y uno la siguiente, incluida la persona en entrenamiento. Se mide
-     sobre las cuentas y no armando semanas, que eso tarda demasiado para
-     una prueba; que el reparto de verdad cuadra esta comprobado aparte.
+     El interruptor de Ajustes: la plantilla se parte en dos grupos
+     sorteados y, mientras uno libra dos dias seguidos, el otro libra uno;
+     a la semana siguiente se cambian. Entra todo el mundo, tambien quien
+     este en entrenamiento. Se mide sobre las cuentas y no armando
+     semanas, que eso tarda demasiado para una prueba; que el reparto de
+     verdad cuadra esta comprobado aparte.
      ================================================================= */
   (function(){
     const guarda = S.config.modoDosUno, guardaDes = S.config.modoDosUnoDesfase;
@@ -10570,14 +10735,26 @@ function pruebas(){
 
     /* --- encendido --- */
     S.config.modoDosUno = true; S.config.modoDosUnoDesfase = 0; limpiar();
-    const nAct = activos().length;
+    const cuentas = (kk) => E.map(e => libresSemana(e.id, kk));
+    const retrato = (kk) => E.map(e => e.nombre + ':' + libresSemana(e.id, kk)).join(' ');
 
-    ok('Encendido, la mitad libra dos dias y la otra mitad uno',
+    ok('Encendido, cada semana unos libran dos dias y otros uno: nunca todos dos',
        (() => {
-         const dos = E.filter(e => libresSemana(e.id, k) === 2).length;
-         return dos === Math.ceil(nAct/2) || dos === Math.floor(nAct/2);
+         for(let i = 0; i < 6; i++){
+           const v = cuentas(addDias(k, 7*i));
+           if(v.indexOf(2) < 0 || v.indexOf(1) < 0) return false;
+         }
+         return true;
        })(),
-       E.map(e => e.nombre + ':' + libresSemana(e.id, k)).join(' '));
+       retrato(k) + '  //  ' + retrato(addDias(k, 7)));
+    ok('Los dos grupos salen mitad y mitad (con siete, 4 y 3)',
+       (() => {
+         const g = gruposDosUno();
+         return g.a.length === Math.ceil(E.length/2) && g.b.length === Math.floor(E.length/2) &&
+                g.a.concat(g.b).sort().join(',') === E.map(e => e.id).sort().join(',');
+       })(),
+       (() => { const g = gruposDosUno();
+         return nombresGrupo(g.a).join('/') + '  vs  ' + nombresGrupo(g.b).join('/'); })());
     ok('Cada persona alterna dos, uno, dos, uno semana tras semana',
        E.every(e => {
          const v = [];
@@ -10588,44 +10765,73 @@ function pruebas(){
        (() => { const e = E[0]; const v = [];
          for(let i = 0; i < 6; i++) v.push(libresSemana(e.id, addDias(k, 7*i)));
          return e.nombre + ': ' + v.join(' - '); })());
-    ok('En dos semanas seguidas todos descansan lo mismo: tres dias',
-       E.every(e => libresSemana(e.id, k) + libresSemana(e.id, addDias(k, 7)) === 3),
-       E.map(e => e.nombre + ':' + (libresSemana(e.id, k) + libresSemana(e.id, addDias(k,7)))).join(' '));
-    ok('Quien esta en entrenamiento tambien entra en el reparto',
+    ok('Los dos grupos se cambian los papeles cada semana',
+       (() => {
+         const g = gruposDosUno();
+         for(let i = 0; i < 6; i++){
+           const kk = addDias(k, 7*i);
+           const p = leTocanDosLibres(g.a[0], kk);
+           if(!g.a.every(id => leTocanDosLibres(id, kk) === p)) return false;
+           if(!g.b.every(id => leTocanDosLibres(id, kk) !== p)) return false;
+         }
+         return true;
+       })());
+    ok('Quien esta en entrenamiento tambien entra en el reparto de dos-y-uno',
        (() => {
          const ent = E.find(x => entrenando(x));
          if(!ent) return true;
-         return libresSemana(ent.id, k) + libresSemana(ent.id, addDias(k, 7)) === 3;
+         const g = gruposDosUno();
+         return g.a.indexOf(ent.id) >= 0 || g.b.indexOf(ent.id) >= 0;
        })(),
        (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
-    ok('Las mitades se cambian de una semana a la siguiente',
+    ok('El sorteo es repetible: la misma semilla da siempre los mismos grupos',
+       gruposDosUno().a.join(',') === gruposDosUno().a.join(','));
+    ok('Sortear otra vez cambia quien va con quien',
        (() => {
-         const a = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.id).sort().join();
-         const b = activos().filter(e => leTocanDosLibres(e.id, addDias(k, 7))).map(e => e.id).sort().join();
-         return a !== b;
-       })(),
-       (() => {
-         const a = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.nombre);
-         const b = activos().filter(e => leTocanDosLibres(e.id, addDias(k, 7))).map(e => e.nombre);
-         return '[' + a.join(', ') + ']  luego  [' + b.join(', ') + ']';
+         const g0 = S.config.modoDosUnoSemilla;
+         const antes = gruposDosUno().a.join(',');
+         let distinto = false;
+         for(let i = 1; i <= 60 && !distinto; i++){
+           S.config.modoDosUnoSemilla = g0 + i;
+           if(gruposDosUno().a.join(',') !== antes) distinto = true;
+         }
+         S.config.modoDosUnoSemilla = g0; limpiar();
+         return distinto;
        })());
-    ok('El boton de cambiar las mitades las intercambia',
+    ok('Rehacer solo toca borradores de esta semana en adelante, nunca lo publicado',
        (() => {
-         const antes = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.id).sort().join();
+         const guardaSem = S.semanas;
+         const lun = lunesDe(hoyISO());
+         const celda1 = {}; celda1[ck(E[0].id, 0)] = { t:'x', p:'y', o:'auto', b:false };
+         S.semanas = {
+           [addDias(lun, -7)]: { estado:'borrador', celdas: celda1 },   // pasada: no
+           [lun]:              { estado:'borrador', celdas: celda1 },   // esta: si
+           [addDias(lun, 7)]:  { estado:'publicado', celdas: celda1 },  // publicada: no
+           [addDias(lun, 14)]: { estado:'borrador', celdas: {} },       // vacia: no
+           [addDias(lun, 21)]: { estado:'borrador', celdas: celda1 }    // futura: si
+         };
+         const ks = borradoresDeRenta();
+         S.semanas = guardaSem;
+         return ks.length === 2 && ks[0] === lun && ks[1] === addDias(lun, 21);
+       })(),
+       'de cinco semanas solo entran las dos que tocan');
+    ok('El boton "Empezar al reves" le da la vuelta a los papeles',
+       (() => {
+         const g = gruposDosUno();
+         const antes = leTocanDosLibres(g.a[0], k);
          S.config.modoDosUnoDesfase = 1; limpiar();
-         const luego = activos().filter(e => leTocanDosLibres(e.id, k)).map(e => e.id).sort().join();
+         const luego = leTocanDosLibres(g.a[0], k);
          S.config.modoDosUnoDesfase = 0; limpiar();
          return antes !== luego;
        })());
-    ok('Con cuatro personas o menos el reparto por mitades se apaga solo',
+    ok('Con cuatro personas o menos el reparto de dos-y-uno se apaga solo',
        (() => {
          const rot = S.empleados.filter(x => equipoDe(x) === 'rotativo');
          if(rot.length < 5) return true;
          const guardaAct = rot.map(x => x.activo);
          rot.forEach((x, i) => x.activo = i < 4);          // solo cuatro
          limpiar();
-         const todosUno = activos().every(x => libresSemana(x.id, k) === 1) &&
-                          activos().every(x => libresSemana(x.id, addDias(k, 7)) === 1);
+         const todosUno = activos().every(x => libresSemana(x.id, k) === 1);
          rot.forEach((x, i) => x.activo = guardaAct[i]);
          limpiar();
          return todosUno;
@@ -10637,6 +10843,42 @@ function pruebas(){
     limpiar();
     ok('El interruptor queda como estaba despues de probarlo',
        S.config.modoDosUno === guarda);
+  })();
+
+  /* =================================================================
+     LA VISTA DE UN DIA Y LA DE LA SEMANA
+     El fallo que arreglan: la vista se decidia una sola vez y se quedaba
+     ahi. Quien abria la aplicacion con la ventana estrecha se quedaba
+     viendo un solo dia para siempre, aunque despues ensanchara.
+     ================================================================= */
+  (function(){
+    const anchoDeVerdad = pantallaAngosta;
+    const gDia = DIA_MOVIL, gMano = VISTA_A_MANO;
+    const fingir = (a) => { window.pantallaAngosta = () => a; };
+
+    fingir(false); VISTA_A_MANO = false; decidirVista();
+    ok('En pantalla ancha se ve la semana entera', DIA_MOVIL === -1, 'DIA_MOVIL=' + DIA_MOVIL);
+
+    fingir(true); decidirVista();
+    ok('Al estrechar la ventana pasa sola a un dia', DIA_MOVIL >= 0, 'DIA_MOVIL=' + DIA_MOVIL);
+
+    fingir(false); decidirVista();
+    ok('Y al ensanchar vuelve sola a la semana entera', DIA_MOVIL === -1, 'DIA_MOVIL=' + DIA_MOVIL);
+
+    /* lo que elige la persona se respeta */
+    DIA_MOVIL = 3; VISTA_A_MANO = true;
+    fingir(false); decidirVista();
+    ok('El dia elegido a mano no lo pisa el tamano de la ventana',
+       DIA_MOVIL === 3, 'DIA_MOVIL=' + DIA_MOVIL);
+    fingir(true); decidirVista();
+    ok('Ni al estrechar', DIA_MOVIL === 3, 'DIA_MOVIL=' + DIA_MOVIL);
+
+    /* y se puede devolver a automatico */
+    VISTA_A_MANO = false; fingir(false); decidirVista();
+    ok('"Vista automatica" devuelve el mando al tamano de la ventana', DIA_MOVIL === -1);
+
+    window.pantallaAngosta = anchoDeVerdad;
+    DIA_MOVIL = gDia; VISTA_A_MANO = gMano;
   })();
 
   ok('El color de la marca se convierte bien en sus tres tonos',
