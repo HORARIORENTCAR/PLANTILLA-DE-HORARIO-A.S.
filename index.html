@@ -277,6 +277,15 @@ td.cell.feriado{background:#fdfaf3}
 .chip.ausente.medica::before{background:var(--bad)}
 .chip.ausente.medica .h{color:var(--bad)}
 /* 'otro' se queda con el ambar de arriba, que es el color de "algo pasa" */
+/* La sombra: misma forma que las demas casillas, para que la tabla se lea
+   de corrido. El distintivo son tres detalles pequenos y no un recuadro
+   distinto: la barra de la izquierda a rayas -no cubre una marca-, el
+   fondo apenas tenido, y la palabra SOMBRA donde las otras llevan la
+   marca. Con eso se distingue de un vistazo sin gritar. */
+.chip.sombra{background:var(--brand-soft);color:var(--ink);
+  box-shadow:inset 0 0 0 1px var(--brand-line)}
+.chip.sombra::before{background:repeating-linear-gradient(180deg,var(--brand) 0 3px,transparent 3px 6px);width:6px}
+.chip.sombra .marca{color:var(--brand);font-weight:800;letter-spacing:.6px}
 td.cell:hover .chip.vacio{color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand-line)}
 .chip.conflicto{box-shadow:inset 0 0 0 2px var(--bad)}
 .chip.drag{opacity:.35}
@@ -309,7 +318,13 @@ i.rayas.otro{background:repeating-linear-gradient(45deg,#fdf6e8,#fdf6e8 3px,var(
 .equipo.sup .equipo-cab h2::before{background:#8a6d3b}
 .equipo.ser .equipo-cab h2::before{background:#3f6f7d}
 .equipo-cab .sub{font-size:12px;color:var(--soft)}
-.equipo-cab .acc{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.equipo-cab .acc{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* El grupo de moverse por las semanas va separado de los botones que
+   tocan el horario: son dos cosas distintas y pulsar una por otra en una
+   fila de seis botones iguales es facil. */
+.navsem{display:inline-flex;gap:6px;flex-wrap:wrap;padding-left:9px;margin-left:3px;
+  border-left:1px solid var(--line)}
+@media (max-width:700px){ .navsem{border-left:0;padding-left:0;margin-left:0;width:100%} }
 
 /* ---------- Calendario para elegir la semana ---------- */
 .mescab{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:10px}
@@ -662,7 +677,11 @@ function turnosIniciales(){
     c('Terminal B - segundo turno','3-10','15:00','22:00','tarde',      ['rotativo'],
       { terminal:'B', finReal:'23:00', horas:8, activo:false }),
     /* --- agentes de servicio --- */
-    c('Servicio - intermedio',    '9-5',  '09:00','17:00','intermedio', ['servicio']),
+    /* El 9-5 lo comparten los dos horarios, pero por motivos distintos: en
+       agentes de servicio es el refuerzo del mediodia, y en el mostrador
+       existe solo para quien esta de sombra. Ningun otro agente del
+       mostrador puede cogerlo (lo frena 'validar'). */
+    c('Servicio - intermedio',    '9-5',  '09:00','17:00','intermedio', ['servicio','rotativo']),
     c('Mediodia largo',           '11-7', '11:00','19:00','intermedio', ['servicio','rotativo'],
       { nota:'En agentes de servicio es la cobertura del mediodia en la Terminal A, que los lunes y los sabados hace siempre la misma persona. En el counter es el turno unico de la Terminal B para los dias de plantilla corta.' }),
     /* --- supervisores --- */
@@ -743,10 +762,13 @@ function prioridadInicial(puestos, turnos){
   return [
     /* --- LOS CUATRO PRINCIPALES ---
        La manana y la tarde de cada terminal. Nunca se quedan sin cubrir:
-       son lo primero que se reparte y lo ultimo que se sacrifica. */
+       son lo primero que se reparte y lo ultimo que se sacrifica.
+       Las mananas no entran a la misma hora: la Terminal A abre a las 7 y
+       la Terminal B a las 8. Las tardes si, las dos a las 3. */
     { puestoId:P['A - Hertz'],          turnoId:T['7-3'],  dias:todos.slice(), clave:true },
     { puestoId:P['A - Hertz'],          turnoId:T['3-11'], dias:todos.slice(), clave:true },
-    { puestoId:P['Terminal B'], turnoId:T['7-3'],  dias:todos.slice(), clave:true },
+    /* La Terminal B abre una hora mas tarde por la manana: 8-4, no 7-3 */
+    { puestoId:P['Terminal B'], turnoId:T['8-4'],  dias:todos.slice(), clave:true },
     { puestoId:P['Terminal B'], turnoId:T['3-11'], dias:todos.slice(), clave:true },
     /* --- EL RELLENO ---
        Turnos cruzados de la Terminal A, para amortiguar la carga del dia.
@@ -1108,7 +1130,7 @@ function datosDemo(){
 
   const k = lunesDe(hoyISO());
   return {
-    version: 22,
+    version: 24,
     empresa: 'ANDEL STAR',
     pin: '1234',
     config: {
@@ -1933,7 +1955,89 @@ function migrar(){
     }
     bitacora('La Terminal B pasa a mostrar las tres marcas: Hertz, Dollar y Thrifty.');
   }
-  S.version = 22;
+  /* --- v23: la manana de la Terminal B vuelve a ser de 8 a 4 ---
+     La v21 la habia igualado con la Terminal A a las 7. El usuario lo
+     corrigio: la Terminal B abre una hora mas tarde.
+
+     No basta con cambiar la lista de prioridad: las semanas ya armadas
+     tienen escrito el 7-3 en las casillas de la Terminal B y se quedarian
+     asi, marcando conflicto por un turno que ya no le corresponde a ese
+     puesto. Se cambia el turno en la propia casilla, que es un cambio de
+     hora y no un reparto distinto: sigue trabajando la misma persona el
+     mismo dia, entrando una hora mas tarde.
+
+     Lo publicado no se toca: es lo que ya se le dio a la gente. */
+  if(!(S.version >= 23)){
+    const T = {}; S.turnos.forEach(t => T[t.corto] = t.id);
+    const pB = S.puestos.find(x => x.terminal === 'B');
+    if(pB && T['7-3'] && T['8-4']){
+      /* el 8-4 tiene que estar disponible para el mostrador */
+      const t84 = S.turnos.find(x => x.id === T['8-4']);
+      if(t84){
+        t84.activo = true;
+        if(!Array.isArray(t84.equipos)) t84.equipos = [];
+        if(t84.equipos.indexOf('rotativo') < 0) t84.equipos.push('rotativo');
+      }
+      if(Array.isArray(S.config.prioridad)){
+        const l = S.config.prioridad;
+        const iB73 = l.findIndex(x => x.puestoId === pB.id && x.turnoId === T['7-3']);
+        const yaB84 = l.some(x => x.puestoId === pB.id && x.turnoId === T['8-4']);
+        if(iB73 >= 0 && !yaB84) l[iB73].turnoId = T['8-4'];
+      }
+      /* y las casillas de los borradores de esta semana en adelante */
+      let tocadas = 0;
+      const desde = lunesDe(hoyISO());
+      Object.keys(S.semanas).forEach(kk => {
+        const w = S.semanas[kk];
+        if(!w || kk < desde || w.estado === 'publicado') return;
+        for(const key in (w.celdas || {})){
+          const c = w.celdas[key];
+          if(c && c.p === pB.id && c.t === T['7-3']){ c.t = T['8-4']; tocadas++; }
+        }
+      });
+      olvidarTodo();
+      bitacora('La manana de la Terminal B pasa de 7-3 a 8-4.' +
+               (tocadas ? ' Se cambiaron ' + tocadas + ' casilla(s) ya puestas.' : ''));
+    }
+  }
+  /* --- v24: la sombra --- */
+  if(!(S.version >= 24)){
+    /* el 9-5 pasa a existir tambien en el mostrador, solo para la sombra */
+    const t95 = (S.turnos || []).find(t => t.corto === '9-5');
+    if(t95){
+      if(!Array.isArray(t95.equipos)) t95.equipos = [];
+      if(t95.equipos.indexOf('rotativo') < 0) t95.equipos.push('rotativo');
+      t95.activo = true;
+    }
+    /* Las casillas ya puestas de quien esta de sombra dejaban de valer:
+       tenian un puesto asignado, y ahora acompanan sin puesto. Se pasan a
+       sombra en los borradores de esta semana en adelante; lo publicado no
+       se toca, que es lo que la gente ya tiene en la mano. */
+    let tocadas = 0;
+    const desde = lunesDe(hoyISO());
+    const t311 = (S.turnos || []).find(t => t.corto === '3-11');
+    (S.empleados || []).forEach(e => {
+      if(!haceSombra(e)) return;
+      Object.keys(S.semanas).forEach(kk => {
+        const w = S.semanas[kk];
+        if(!w || kk < desde || w.estado === 'publicado') return;
+        for(let d = 0; d < 7; d++){
+          const c = (w.celdas || {})[ck(e.id, d)];
+          if(!c || c.t === LIBRE || c.sombra || !c.p) continue;
+          /* se le respeta el turno si ya era uno de los dos de sombra */
+          const t = turno(c.t);
+          const vale = t && TURNOS_SOMBRA.indexOf(t.corto) >= 0;
+          if(!vale && t311) c.t = t311.id;
+          c.p = null; c.sombra = true; c.con = null; c.o = 'auto'; c.b = false;
+          tocadas++;
+        }
+      });
+    });
+    olvidarTodo();
+    bitacora('Quien esta en entrenamiento pasa a hacer sombra: acompana en el 3-11 o en el 9-5 y ya no cubre un puesto.' +
+             (tocadas ? ' Se cambiaron ' + tocadas + ' casilla(s) ya puestas.' : ''));
+  }
+  S.version = 24;
 }
 
 function cargar(){
@@ -2279,9 +2383,11 @@ function libresPorPersona(k){
   const emps = activos();
   const turno2 = turnoDosLibres(k);
   /* Con la plantilla muy corta se acaba el turno de dos dias seguidos: cada
-     uno libra uno y punto. Con cuatro personas no hay margen para regalos. */
+     uno libra uno y punto. Con cuatro personas no hay margen para regalos.
+     Se cuentan solo los que pueden CUBRIR: la sombra esta, pero no tapa
+     ningun mostrador, asi que sumarla daria una holgura que no existe. */
   let disponibles = 0;
-  emps.forEach(e => { if(diasAusente(e.id, k).length < 7) disponibles++; });
+  emps.forEach(e => { if(!haceSombra(e) && diasAusente(e.id, k).length < 7) disponibles++; });
   const corta = disponibles <= PLANTILLA_CORTA;
   const dosUno = modoDosUno() && !corta;
   const firma = emps.map(e => e.id + ':' + diasAusente(e.id, k).length +
@@ -2366,8 +2472,15 @@ function entrenando(e){
   return !!(e && e.entrenamiento && e.entrenamiento.activo);
 }
 /* =====================================================================
-   EL ENTRENAMIENTO CEDE LOS DIAS EN QUE NO SOBRA NADIE
-   Las limitaciones del entrenamiento tienen sentido cuando hay gente de
+   ANTES AQUI EL ENTRENAMIENTO CEDIA CUANDO FALTABA GENTE
+   Ya no. El usuario lo cambio el 24 de agosto de 2026: quien esta en
+   entrenamiento NO cubre un puesto nunca, ni aunque falte gente. Los dias
+   de poca gente se resuelven con el turno unico de la Terminal B -las dos
+   puntas de la Terminal A y el 11-7 en la B-, que es una regla que ya
+   existia y que no necesita meter a nadie a medio formar en un mostrador.
+
+   Se deja escrito lo que decia antes para que no se vuelva a proponer:
+   las limitaciones tenian sentido cuando hay gente de
    sobra: si ISAAC no va a la Terminal B ni lleva el uniforme de Hertz,
    siempre queda otro que si. Pero los dias en que solo hay tres o cuatro
    personas no queda otro: esa limitacion deja un puesto principal sin
@@ -2382,27 +2495,64 @@ function entrenando(e){
    nada: preguntar por quien trabaja seria la pescadilla que se muerde la
    cola, porque quien libra se decide despues.
    ===================================================================== */
-const ENTRENO_CEDE = 4;
-function entrenoCede(e, d, k){
-  if(!(d >= 0)) return false;
-  if(typeof e === 'string') e = empleado(e);
-  if(!entrenando(e)) return false;
-  return disponiblesDia(d, k || SEMANA) <= ENTRENO_CEDE;
-}
+/* Se conserva devolviendo siempre false: la usaban varias pantallas y
+   hay pruebas que la miran. Ceder ya no cede nunca. */
+function entrenoCede(){ return false; }
 /* Las marcas y los turnos que esa persona no puede hacer ESE dia */
 function vetoPuestos(e, d, k){
   if(typeof e === 'string') e = empleado(e);
-  const v = (e && e.puestosProhibidos) || [];
-  if(!entrenoCede(e, d, k)) return v;
-  const t = (e.entrenamiento || {}).puestos || [];
-  return v.filter(id => t.indexOf(id) < 0);
+  return (e && e.puestosProhibidos) || [];
 }
 function vetoTurnos(e, d, k){
   if(typeof e === 'string') e = empleado(e);
-  const v = (e && e.turnosProhibidos) || [];
-  if(!entrenoCede(e, d, k)) return v;
-  const t = (e.entrenamiento || {}).turnos || [];
-  return v.filter(id => t.indexOf(id) < 0);
+  return (e && e.turnosProhibidos) || [];
+}
+/* =====================================================================
+   LA SOMBRA
+   Quien esta en entrenamiento no cubre un puesto: acompana a un agente
+   que si lo cubre, para aprender mirando. Eso son dos cosas que hay que
+   respetar en todo el motor, y las dos por el mismo motivo:
+
+   - NO CUENTA COMO COBERTURA. Si contara, la aplicacion creeria que el
+     mostrador esta atendido por alguien que todavia esta aprendiendo, que
+     es justo lo que se quiere evitar.
+   - NO OCUPA PLAZA. Los puestos que se abren cada dia se reparten entre
+     los demas; la sombra va aparte, como una persona de mas.
+
+   Solo hace dos turnos: el 3-11, donde siempre hay dos agentes a los que
+   acompanar, y el 9-5, que existe unicamente para esto y que ningun otro
+   agente del mostrador puede coger.
+
+   Todo esto se apaga entero en cuanto se marca la casilla de "listo" en
+   su ficha: ahi pasa a ser un agente normal sin tocar nada mas.
+   ===================================================================== */
+const TURNO_SOMBRA_PROPIO = '9-5';        // el que existe solo para la sombra
+const TURNOS_SOMBRA = ['3-11', '9-5'];    // por orden de preferencia
+function haceSombra(e){
+  if(typeof e === 'string') e = empleado(e);
+  return !!(e && equipoDe(e) === 'rotativo' && entrenando(e));
+}
+function turnosDeSombra(){
+  return TURNOS_SOMBRA
+    .map(c => (S.turnos || []).find(t => t.corto === c && t.activo))
+    .filter(Boolean);
+}
+/* ¿Este turno del mostrador es exclusivo de la sombra? */
+function turnoSoloSombra(turnoId){
+  const t = turno(turnoId);
+  return !!(t && t.corto === TURNO_SOMBRA_PROPIO);
+}
+const esSombra = (c) => !!(c && c.sombra);
+/* A quien acompana ese dia: alguien del mismo turno que si cubre un
+   puesto. Si no hay nadie en ese turno exacto, la casilla se queda solo
+   con "Sombra", que es lo que pidio el usuario para el 9-5. */
+function companeroDeSombra(ctx, d, turnoId){
+  for(const x of S.empleados){
+    if(equipoDe(x) !== 'rotativo' || !x.activo) continue;
+    const c = ctx.celdas[ck(x.id, d)];
+    if(c && c.t === turnoId && !c.sombra && c.p) return x.id;
+  }
+  return null;
 }
 /* Lo que va a cambiar al darle por listo, en palabras, para poder
    ensenarselo antes de tocar nada */
@@ -2539,6 +2689,7 @@ function puestoTerminalB(){
    lo que estamos decidiendo aqui: si no, seria una pescadilla que se muerde
    la cola. */
 function sabeCubrirNucleoBase(e, d, k){
+  if(haceSombra(e)) return false;        // la sombra no sostiene nada
   if(!_priCache) listaPrioridad();
   const base = _priCache.porDia[d] || [];
   const vp = vetoPuestos(e, d, k), vt = vetoTurnos(e, d, k);
@@ -2618,6 +2769,7 @@ function puestosDia(d, k){
    Con 'ignorarFijo' se pregunta sin contar su dia libre fijo, que es lo que
    hace falta para decidir si ese dia fijo tiene que ceder. */
 function sabeCubrirNucleo(e, d, k){
+  if(haceSombra(e)) return false;        // acompana, no sostiene ningun puesto
   const vp = vetoPuestos(e, d, k), vt = vetoTurnos(e, d, k);
   return prioridadDia(d, k).some(x => x.clave &&
     vp.indexOf(x.puestoId) < 0 &&
@@ -2801,13 +2953,19 @@ function librePrevistoDe(empId, k){
    reparto ha puesto dos, y ese dia se abren dos puestos que no hay quien
    ocupe. Con esto las dos cuentas miran siempre lo mismo. */
 let _libranAhora = null;
+let _sombrasAhora = null;
 function fijarLibranDe(ctx){
-  const v = [0,0,0,0,0,0,0];
+  const v = [0,0,0,0,0,0,0], so = [0,0,0,0,0,0,0];
   for(let d = 0; d < 7; d++)
-    activos().forEach(e => { if(esLibreReal(ctx.celdas[ck(e.id, d)])) v[d]++; });
-  _libranAhora = v;
+    activos().forEach(e => {
+      if(esLibreReal(ctx.celdas[ck(e.id, d)])){ v[d]++; return; }
+      /* Sombra que ese dia trabaja: cuenta como persona presente pero NO
+         abre puesto, porque va de acompanante. */
+      if(haceSombra(e) && !ausenteEnDia(e.id, d, ctx.k)) so[d]++;
+    });
+  _libranAhora = v; _sombrasAhora = so;
 }
-function soltarLibran(){ _libranAhora = null; }
+function soltarLibran(){ _libranAhora = null; _sombrasAhora = null; }
 /* Una semana esta armada cuando TODOS tienen sus siete casillas puestas.
    A medio llenar no vale: si se contaran los libres de una hoja con dos
    celdas, saldria que no libra nadie y se abririan puestos de mas. */
@@ -2861,9 +3019,40 @@ function libranPorDia(k){
   _trabCache = { k, firma, val:libran };
   return libran;
 }
+/* Cuantas sombras trabajan ese dia. Mientras se esta armando la semana el
+   dato es exacto, porque 'fijarLibranDe' ya paso. Para una semana que aun
+   no existe es una estimacion -no se sabe todavia que dia librara la
+   sombra- y solo se usa para el numero que se ensena en pantalla. */
+function sombrasPorDia(k){
+  if(_sombrasAhora) return _sombrasAhora;
+  k = k || SEMANA;
+  const v = [0,0,0,0,0,0,0];
+  const armada = semanaArmada(k);
+  activos().forEach(e => {
+    if(!haceSombra(e)) return;
+    /* Los dias que la sombra libra NO se cuentan aqui. Si se contaran, ese
+       dia se restaria dos veces -una como dia libre y otra como sombra- y
+       se abriria un puesto menos de los que tocan. */
+    const libra = armada ? null : librePrevistoDe(e.id, k);
+    for(let d = 0; d < 7; d++){
+      if(ausenteEnDia(e.id, d, k)) continue;
+      if(armada){ if(esLibreReal(S.semanas[k].celdas[ck(e.id, d)])) continue; }
+      else if(libra && libra.indexOf(d) >= 0) continue;
+      v[d]++;
+    }
+  });
+  return v;
+}
+/* =====================================================================
+   CUANTOS PUESTOS SE ABREN
+   Se cuenta a quien PUEDE cubrir uno, no a quien esta presente. Sin
+   restar las sombras se abria cada dia un puesto de mas que nadie podia
+   ocupar, y el reparto se pasaba varios segundos por semana buscando a
+   alguien para un sitio imposible antes de rendirse.
+   ===================================================================== */
 function trabajanDia(d, k){
   k = k || SEMANA;
-  return Math.max(0, disponiblesDia(d, k) - (libranPorDia(k)[d] || 0));
+  return Math.max(0, disponiblesDia(d, k) - (libranPorDia(k)[d] || 0) - (sombrasPorDia(k)[d] || 0));
 }
 
 /* Las cuentas del dia se consultan miles de veces al generar una semana.
@@ -3434,6 +3623,7 @@ function ocupacion(ctx, d, turnoId, puestoId){
     if(equipoDe(e) !== 'rotativo') continue;
     const c = ctx.celdas[ck(e.id, d)];
     if(!c || c.t !== turnoId) continue;
+    if(c.sombra) continue;              // acompana, no cubre
     if(puestoId === undefined || c.p === puestoId) n++;
   }
   return n;
@@ -3503,6 +3693,22 @@ function validar(ctx, empId, d, turnoId, puestoId, opciones){
 
   if(!emp) return no('empleado', 'El empleado no existe.');
   if(!emp.activo) return no('inactivo', emp.nombre + ' esta inactivo.', 'Actiualo en la pantalla Empleados si debe trabajar.');
+  /* =================================================================
+     LA SOMBRA, POR LOS DOS LADOS
+     Aqui es donde se sostiene todo lo demas: si la sombra no puede
+     cubrir un puesto, ningun camino del reparto -ni el automatico, ni
+     el arrastrar con el raton, ni el reparar, ni el rebuscar- va a
+     colocarla en uno. Una sola regla en vez de diez comprobaciones
+     repartidas que tarde o temprano se olvida una.
+     ================================================================= */
+  if(turnoId !== LIBRE && haceSombra(emp) && puestoId && !opciones.sombra)
+    return no('sombra', emp.nombre + ' esta de sombra: acompana, no cubre un puesto.',
+      'Marca "Ya esta listo" en su ficha para que pueda cubrir mostrador.');
+  /* Y al reves: el turno de la sombra no lo puede coger nadie mas */
+  if(turnoId !== LIBRE && turnoSoloSombra(turnoId) && equipoDe(emp) === 'rotativo' && !haceSombra(emp))
+    return no('turnoProhibido',
+      'El ' + (turno(turnoId)||{}).corto + ' del mostrador existe solo para quien esta de sombra.',
+      'Para el resto estan los turnos normales del mostrador.');
   /* Cada turno vive en el horario de su equipo. Sin esto, arrastrar un turno
      del counter encima de un supervisor solo se frenaba de rebote (por el
      cupo de libres o por los dias que le tocan), y en cuanto esos limites
@@ -3888,7 +4094,9 @@ function equidad(ctx){
   }
   for(const e of activos()) for(let d = 0; d < 7; d++){
     const c = ctx.celdas[ck(e.id,d)];
-    if(c && c.t !== LIBRE && !c.p) sinPuesto++;
+    /* La sombra no lleva puesto a proposito: no es una casilla a medio
+       poner, es que acompana y no cubre nada. */
+    if(c && c.t !== LIBRE && !c.p && !c.sombra) sinPuesto++;
   }
 
   return { filas, objetivo: diasObjetivo(ctx.k), difHoras, difB, difTardes, difFindes, cumplimiento,
@@ -3987,13 +4195,18 @@ function puntuarCandidato(ctx, emp, d, t, puestoId, pesos){
        a las 7 por irse manana y a las 3 por haber vuelto hoy. Ese dia se
        deja pasar y vale cualquiera de los dos. */
     if(vispera !== vuelta){
-      const quiere = vispera ? ext.pronto : ext.tarde;   // el que le toca
-      const evita  = vispera ? ext.tarde  : ext.pronto;  // justo el contrario
-      if(quiere !== null && entra === quiere) pts += 2000 * suyos * P.equilibrio;
+      const quiere = vispera ? ext.mananas : ext.tardes;   // el grupo que le toca
+      const evita  = vispera ? ext.tardes  : ext.mananas;  // justo el contrario
+      if(quiere.indexOf(entra) >= 0){
+        pts += 2000 * suyos * P.equilibrio;
+        /* desempate: dentro del grupo, la punta del dia es la mejor */
+        const punta = vispera ? ext.pronto : ext.tarde;
+        if(entra === punta) pts += 200 * suyos * P.equilibrio;
+      }
       /* Y el castigo, que es la mitad que faltaba: los turnos de tarde se
          reparten ANTES que los de manana, asi que sin esto la persona ya
-         estaba cogida en el 3-11 cuando le llegaba el turno al 7-3. */
-      else if(evita !== null && entra === evita) pts -= 2000 * suyos * P.equilibrio;
+         estaba cogida en el 3-11 cuando le llegaba el turno de manana. */
+      else if(evita.indexOf(entra) >= 0) pts -= 2000 * suyos * P.equilibrio;
     }
   }
 
@@ -4115,27 +4328,44 @@ function puestosImposibles(k){
 
 /* =====================================================================
    EL TURNO DE ANTES Y EL DE DESPUES DEL DESCANSO
-   El dia antes de librar se entra en el PRIMER turno del dia -el 7-3-, y
-   el dia que se vuelve, en el ULTIMO -el 3-11-. Asi el descanso se estira
-   por los dos lados: se sale a las 3 de la tarde, se libra, y se vuelve a
-   las 3 de la tarde del otro dia. Con dos dias libres son mas de tres
-   dias enteros fuera.
+   El dia antes de librar se entra POR LA MANANA, y el dia que se vuelve,
+   en el ULTIMO turno -el 3-11-. Asi el descanso se estira por los dos
+   lados: se sale por la tarde, se libra, y se vuelve a las 3 de la tarde
+   del otro dia. Con dos dias libres son mas de tres dias enteros fuera.
 
    No se escriben "7-3" y "3-11" a mano: se miran los turnos que ese dia
-   abre la lista de prioridad y se cogen el que entra mas temprano y el
-   que entra mas tarde. Si mañana cambias la lista, la regla sigue
+   abre la lista de prioridad. Si mañana cambias la lista, la regla sigue
    valiendo sin tocar nada.
+
+   Y no vale UN solo turno, vale el GRUPO de la manana. Cuando la Terminal
+   B entraba tambien a las 7 habia dos puestos a esa hora y la regla se
+   cumplia para dos personas al dia. Al pasar la Terminal B a las 8 quedo
+   un unico puesto a las 7, y exigir esa hora exacta dejaba la regla en
+   una de cada seis: el resto de la gente no tenia donde ir. Con el grupo
+   entero -todo lo marcado como turno de manana- la regla vuelve a
+   cumplirse para todos, que es lo que se pedia: salir temprano la vispera
+   y entrar tarde a la vuelta.
+
+   Dentro de la manana se sigue prefiriendo la mas temprana, pero eso ya
+   es un desempate y no una condicion.
    ===================================================================== */
 function extremosDelDia(d, k){
   let pronto = null, tarde = null;
+  const mananas = [], tardes = [];
   prioridadDia(d, k || SEMANA).forEach(x => {
     const tt = turno(x.turnoId);
     if(!tt) return;
     const m = min2(tt.inicio);
     if(pronto === null || m < pronto) pronto = m;
     if(tarde  === null || m > tarde)  tarde  = m;
+    if(tt.tipo === 'temprano' && mananas.indexOf(m) < 0) mananas.push(m);
+    if(tt.tipo === 'tarde'    && tardes.indexOf(m)  < 0) tardes.push(m);
   });
-  return { pronto, tarde };
+  /* Por si algun dia no hubiera turnos marcados de manana o de tarde: se
+     usa el mas temprano y el mas tardio, que es lo que habia siempre. */
+  if(!mananas.length && pronto !== null) mananas.push(pronto);
+  if(!tardes.length  && tarde  !== null) tardes.push(tarde);
+  return { pronto, tarde, mananas, tardes };
 }
 
 /* Cuantos podrian, en principio, cubrir ese puesto ese dia */
@@ -4602,6 +4832,52 @@ function llenarDia(ctx, d, slots, azar){
   return faltan;
 }
 
+/* =====================================================================
+   COLOCAR A LAS SOMBRAS
+   Se les dan sus dias de trabajo como a todo el mundo, pero en vez de un
+   puesto se les da un turno de acompanamiento. Se prefiere el 3-11,
+   donde hay dos agentes a los que mirar; el 9-5 entra cuando el 3-11 no
+   cabe -por el descanso minimo del dia anterior, por ejemplo- o cuando
+   ese dia no hay a quien acompanar por la tarde.
+   ===================================================================== */
+function colocarSombras(ctx, k){
+  const turnos = turnosDeSombra();
+  if(!turnos.length) return;
+  for(const e of activos()){
+    if(!haceSombra(e)) continue;
+    const objetivo = diasObjetivoDe(e.id, k);
+    for(let d = 0; d < 7; d++){
+      if(ctx.celdas[ck(e.id, d)]) continue;
+      if(!e.diasDisponibles[d]) continue;
+      if(fijoVigente(e, k) === d) continue;            // su dia libre fijo
+      if(ausenteEnDia(e.id, d, k)) continue;           // vacaciones, licencia o permiso
+      if(diasTrabCtx(ctx, e.id) >= objetivo) continue; // ya tiene sus dias
+      /* Cuantas veces lleva ya cada turno esta semana. Aprender solo la
+         tarde no es aprender el mostrador: hay que ver las dos mitades
+         del dia, asi que gana el turno que menos haya hecho. */
+      const vecesYa = {};
+      turnos.forEach(t => vecesYa[t.id] = 0);
+      for(let x = 0; x < 7; x++){
+        const cc = ctx.celdas[ck(e.id, x)];
+        if(cc && cc.sombra && vecesYa[cc.t] !== undefined) vecesYa[cc.t]++;
+      }
+      let mejor = null;
+      for(const t of turnos){
+        const r = validar(ctx, e.id, d, t.id, null, { reemplazar:true, sombra:true });
+        if(!r.ok && !r.aviso) continue;                // el descanso minimo no se salta
+        const compi = companeroDeSombra(ctx, d, t.id);
+        let pts = -vecesYa[t.id] * 1000;               // lo primero, repartir
+        if(compi) pts += 100;                          // mejor con alguien al lado
+        if(t.corto === '3-11') pts += 10;              // y a igualdad, la tarde
+        if(!r.ok) pts -= 50;
+        if(!mejor || pts > mejor.pts) mejor = { pts, t, compi };
+      }
+      if(mejor) ctx.celdas[ck(e.id, d)] =
+        { t:mejor.t.id, p:null, o:'auto', b:false, sombra:true, con: mejor.compi || null };
+    }
+  }
+}
+
 /* Coloca a la mejor persona en un puesto concreto */
 function colocar(ctx, s, azar){
   if(ocupacion(ctx, s.d, s.turnoId, s.puestoId) >= cobNec(s.puestoId, s.turnoId, s.d, ctx.k)) return true;
@@ -4735,7 +5011,7 @@ function construir(k, base, azar){
         if(!t || !t.activo) continue;
         const r = validar(ctx, e.id, d, cmb.turnoId, cmb.puestoId, { reemplazar:true });
         // las reglas de verdad duras no se tocan nunca
-        if(!r.ok && ['diaNoDisp','turnoProhibido','puestoProhibido','inactivo','doble','descanso'].includes(r.motivo)) continue;
+        if(!r.ok && ['diaNoDisp','turnoProhibido','puestoProhibido','inactivo','doble','descanso','sombra'].includes(r.motivo)) continue;
         const falta = Math.max(0, cobNec(cmb.puestoId, cmb.turnoId, d, k) - ocupacion(ctx, d, cmb.turnoId, cmb.puestoId));
         let pts = falta * 1000;                              // lo primero, tapar lo que falta
         if(r.ok) pts += 400; else if(r.aviso) pts += 150;    // mejor sin avisos
@@ -4745,6 +5021,12 @@ function construir(k, base, azar){
       if(mejor) ctx.celdas[ck(e.id, d)] = { t:mejor.cmb.turnoId, p:mejor.cmb.puestoId, o:'auto', b:false };
     }
   }
+
+  /* 4b) LAS SOMBRAS.
+     Van despues de repartir los puestos, y no antes, porque acompanan a
+     quien ya quedo colocado: hasta que no esta hecho el reparto no se
+     sabe a quien hay que ponerles al lado. */
+  colocarSombras(ctx, k);
 
   /* 5) Dia libre en lo que quede vacio, sin pasarse de los que le tocan y
      sin que ningun dia acabe con mas gente librando de la permitida. */
@@ -4777,7 +5059,7 @@ function construir(k, base, azar){
       const t = turno(cmb.turnoId);
       if(!t || !t.activo) continue;
       const r = validar(ctx, x.e.id, x.d, cmb.turnoId, cmb.puestoId, { reemplazar:true });
-      if(!r.ok && ['libreFijo','diaNoDisp','turnoProhibido','puestoProhibido','inactivo','doble','descanso'].includes(r.motivo)) continue;
+      if(!r.ok && ['libreFijo','diaNoDisp','turnoProhibido','puestoProhibido','inactivo','doble','descanso','sombra'].includes(r.motivo)) continue;
       let pts = (r.ok ? 400 : (r.aviso ? 150 : 0));
       pts += puntuarCandidato(ctx, x.e, x.d, t, cmb.puestoId, { equilibrio:1, preferencias:1 }) * 0.1;
       if(!mejor || pts > mejor.pts) mejor = { pts, cmb };
@@ -6596,7 +6878,6 @@ function pantallaAjustes(){
   h += ajustesSupervision();
   h += ajustesServicio();
   h += ajustesAusencias();
-  h += ajustesFeriados();
 
   /* --- nube --- */
   const n = nubeConfig();
@@ -7027,7 +7308,9 @@ function ajustesAusencias(){
         '<td>' + fechaCorta(a.hasta) + '/' + a.hasta.slice(0,4) + '</td>' +
         '<td><b>' + dias + '</b></td>' +
         '<td class="tiny muted">' + esc(a.nota || '') + '</td>' +
-        '<td style="text-align:right"><button class="btn sec sm" onclick="borrarAusencia(\'' + a.id + '\')">Eliminar</button></td></tr>';
+        '<td style="text-align:right;white-space:nowrap">' +
+          '<button class="btn sec sm" onclick="editarAusencia(\'' + a.id + '\')">Editar</button> ' +
+          '<button class="btn sec sm" onclick="borrarAusencia(\'' + a.id + '\')">Eliminar</button></td></tr>';
     });
     return t + '</tbody></table>';
   };
@@ -7069,7 +7352,9 @@ function ajustesAusencias(){
        'Lo unico que hace falta es que cada dia queden <b>' + nNuc + ' personas que puedan cubrir los puestos principales</b>. ' +
        'Ahora mismo pueden hacerlo <b>' + nApt + ' de ' + activos().length + '</b> agentes de renta' +
        (nApt < activos().length
-         ? ' (' + activos().filter(e => aptos.indexOf(e) < 0).map(e => esc(e.nombre)).join(', ') + ' no, por lo que tiene vetado en su ficha)'
+         ? ' (' + activos().filter(e => aptos.indexOf(e) < 0)
+             .map(e => esc(e.nombre) + (haceSombra(e) ? ' hace sombra' : ' no, por lo que tiene vetado en su ficha'))
+             .join('; ') + ')'
          : '') + '.</p>';
 
   return h + '</div>';
@@ -7086,6 +7371,56 @@ function agregarAusencia(){
   bitacora(TIPOS_AUSENCIA[a.tipo] + ' de ' + empleado(empId).nombre + ' del ' + a.desde + ' al ' + a.hasta + '.');
   guardar(); render();
   toast('Ausencia registrada' + (n ? ' · ' + n + ' semana(s) rehecha(s)' : ''));
+}
+/* =====================================================================
+   CORREGIR UNA AUSENCIA YA REGISTRADA
+   Antes habia que borrarla y volver a escribirla entera para cambiar una
+   fecha mal puesta. Aqui se abre con lo que tiene y se corrige lo que
+   haga falta.
+
+   Al guardar se rehacen las semanas del tramo VIEJO y las del NUEVO: si
+   se mueven las fechas, las semanas de donde salio tambien cambian y
+   dejarlas como estaban seria peor que no haber editado nada.
+   ===================================================================== */
+function editarAusencia(id){
+  const a = ausencias().find(x => x.id === id);
+  if(!a) return;
+  const h =
+    '<div class="grid g2">' +
+      '<label class="f"><span>Quien</span><select id="ed_emp">' +
+        activosTodos().map(e => '<option value="' + e.id + '"' + (e.id === a.empId ? ' selected' : '') + '>' +
+          esc(e.nombre) + '</option>').join('') + '</select></label>' +
+      '<label class="f"><span>Motivo</span><select id="ed_tipo">' +
+        Object.keys(TIPOS_AUSENCIA).map(t => '<option value="' + t + '"' + (t === a.tipo ? ' selected' : '') + '>' +
+          TIPOS_AUSENCIA[t] + '</option>').join('') + '</select></label>' +
+      '<label class="f"><span>Desde</span><input type="date" id="ed_desde" value="' + a.desde + '"></label>' +
+      '<label class="f"><span>Hasta</span><input type="date" id="ed_hasta" value="' + a.hasta + '"></label>' +
+    '</div>' +
+    '<label class="f"><span>Nota (opcional)</span><input type="text" id="ed_nota" value="' + esc(a.nota || '') + '"></label>' +
+    '<p class="tiny muted" style="margin:0">Al guardar se rehacen los borradores de las semanas que toque, ' +
+    'las de antes y las de ahora. Lo publicado no se toca.</p>';
+  modal('Editar la ausencia', h,
+    '<button class="btn sec" onclick="cerrar()">Cancelar</button>' +
+    '<button class="btn" onclick="guardarAusencia(\'' + id + '\')">Guardar cambios</button>');
+}
+function guardarAusencia(id){
+  const a = ausencias().find(x => x.id === id);
+  if(!a) return;
+  const desde = el('ed_desde').value, hasta = el('ed_hasta').value;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta)){ toast('Faltan las fechas'); return; }
+  const viejo = { desde:a.desde, hasta:a.hasta };
+  a.empId = el('ed_emp').value;
+  a.tipo  = el('ed_tipo').value;
+  a.nota  = el('ed_nota').value.trim();
+  a.desde = desde <= hasta ? desde : hasta;
+  a.hasta = desde <= hasta ? hasta : desde;
+  let tocadas = rehacerSemanasDe(viejo.desde, viejo.hasta);
+  if(a.desde !== viejo.desde || a.hasta !== viejo.hasta)
+    tocadas += rehacerSemanasDe(a.desde, a.hasta);
+  bitacora('Se corrigio la ausencia de ' + (empleado(a.empId) || {}).nombre + ': ' +
+           TIPOS_AUSENCIA[a.tipo] + ' del ' + a.desde + ' al ' + a.hasta + '.');
+  cerrar(); guardar(); render();
+  toast('Ausencia corregida' + (tocadas ? ' &middot; ' + tocadas + ' semana(s) rehecha(s)' : ''));
 }
 function borrarAusencia(id){
   const a = ausencias().find(x => x.id === id);
@@ -7197,23 +7532,42 @@ function verFeriadosDominicanos(anio){
   h += '<div class="alert info" style="margin-top:10px">Se van a anadir <b>' + nuevos.length + '</b> de los ' + l.length + '. ' +
        'Los que ya tienes en esa fecha no se tocan, y despues puedes corregir o eliminar cualquiera.</div>';
   modal('Feriados dominicanos ' + anio, h,
-    '<button class="btn sec" onclick="cerrar()">Cancelar</button>' +
+    '<button class="btn sec" onclick="refrescarFeriados()">Cancelar</button>' +
     (nuevos.length ? '<button class="btn ok" id="okfer">Anadir los ' + nuevos.length + '</button>' : ''), true);
   const b = el('okfer');
   if(b) b.onclick = () => {
     nuevos.forEach(f => S.feriados.push({ id:uid(), fecha:f.fecha, nombre:f.nombre }));
     bitacora('Se anadieron ' + nuevos.length + ' feriados dominicanos de ' + anio + '.');
-    guardar(); cerrar(); render();
+    guardar(); cerrar(); refrescarFeriados();
     toast(nuevos.length + ' feriado(s) anadido(s)');
   };
 }
 
-function ajustesFeriados(){
+/* =====================================================================
+   LOS DIAS FERIADOS
+   Viven en el panel de Gerencia y no en Ajustes, porque a quien afectan
+   es a ellos dos: el gerente los libra siempre y Car Control entra uno si
+   y otro no. Tenerlos a un clic del horario, que es donde se ve el efecto,
+   ahorra el viaje a Ajustes cada vez que hay que anadir uno.
+   ===================================================================== */
+let FERIADOS_ABIERTO = false;
+function verFeriados(){
+  FERIADOS_ABIERTO = true;
+  modal('Dias feriados', feriadosHTML(),
+    '<button class="btn sec" onclick="cerrarFeriados()">Cerrar</button>', true);
+}
+function cerrarFeriados(){ FERIADOS_ABIERTO = false; cerrar(); render(); }
+/* Despues de anadir o quitar uno hay que volver a pintar la lista. Si se
+   llamara a render() a secas se cerraria el modal y habria que abrirlo otra
+   vez para meter el siguiente feriado, que es justo lo que molesta. */
+function refrescarFeriados(){
+  if(FERIADOS_ABIERTO) verFeriados(); else render();
+}
+function feriadosHTML(){
   const l = feriados();
   const proximos = l.filter(f => f.fecha >= hoyISO());
-  let h = '<div class="card"><h2>Dias feriados</h2>' +
-    '<p class="muted" style="margin-top:-4px">Se marcan en el horario y son los que deciden quien entra de Gerencia. ' +
-    'Cada uno tiene su regla: el gerente los tiene libres siempre y Car Control trabaja uno si y otro no, por orden de fecha.</p>' +
+  let h = '<p class="muted" style="margin-top:0">Deciden quien entra de Gerencia y se marcan en el horario. ' +
+    'Cada uno tiene su regla: <b>Dilone los libra siempre</b> y <b>Car Control trabaja uno si y otro no</b>, por orden de fecha.</p>' +
     '<div class="row" style="margin-bottom:10px">' +
       '<label class="f" style="margin:0;min-width:170px"><span>Fecha</span><input type="date" id="fer_fecha"></label>' +
       '<label class="f" style="margin:0;flex:1;min-width:200px"><span>Nombre</span><input type="text" id="fer_nombre" placeholder="Dia de la Independencia"></label>' +
@@ -7226,9 +7580,8 @@ function ajustesFeriados(){
       '<span class="tiny muted" style="max-width:380px">Te ensena la lista del ano antes de anadir nada, con los que la Ley 139-97 pasa al lunes marcados aparte.</span>' +
     '</div>';
   if(!l.length){
-    h += '<div class="alert info" style="margin:0">Todavia no hay feriados cargados. ' +
-         'Anade los del ano y el sistema repartira solo las guardias de los supervisores.</div></div>';
-    return h;
+    return h + '<div class="alert info" style="margin:0">Todavia no hay feriados cargados. ' +
+         'Anade los del ano y el sistema repartira solo las guardias de Gerencia.</div>';
   }
   h += '<table class="data"><thead><tr><th>Fecha</th><th>Nombre</th><th>Quien entra</th><th></th></tr></thead><tbody>';
   l.forEach(f => {
@@ -7238,11 +7591,13 @@ function ajustesFeriados(){
       '<span class="mini2">' + DIAS[(s2d(f.fecha).getDay()+6)%7] + '</span></td>' +
       '<td>' + esc(f.nombre) + '</td>' +
       '<td>' + (dentro.length ? esc(dentro.map(x => x.nombre).join(', ')) : '<span class="muted">nadie</span>') + '</td>' +
-      '<td style="text-align:right"><button class="btn sec sm" onclick="borrarFeriado(\'' + f.id + '\')">Eliminar</button></td></tr>';
+      '<td style="text-align:right;white-space:nowrap">' +
+        '<button class="btn sec sm" onclick="editarFeriado(\'' + f.id + '\')">Editar</button> ' +
+        '<button class="btn sec sm" onclick="borrarFeriado(\'' + f.id + '\')">Eliminar</button></td></tr>';
   });
   h += '</tbody></table>';
   h += '<p class="tiny muted" style="margin-bottom:0">' + proximos.length + ' feriado(s) por delante.</p>';
-  return h + '</div>';
+  return h;
 }
 function agregarFeriado(){
   const fecha = el('fer_fecha').value;
@@ -7252,14 +7607,42 @@ function agregarFeriado(){
   S.feriados.push({ id:uid(), fecha, nombre });
   S.feriados.sort((a,b) => a.fecha < b.fecha ? -1 : 1);
   bitacora('Se agrego el feriado ' + nombre + ' (' + fecha + ').');
-  guardar(); render(); toast('Feriado agregado');
+  guardar(); refrescarFeriados(); toast('Feriado agregado');
+}
+/* Corregir un feriado ya puesto. Al cerrar se vuelve al cuadro de
+   feriados, que es de donde se salio. */
+function editarFeriado(id){
+  const f = (S.feriados || []).find(x => x.id === id);
+  if(!f) return;
+  const h = '<div class="grid g2">' +
+      '<label class="f"><span>Fecha</span><input type="date" id="edf_fecha" value="' + f.fecha + '"></label>' +
+      '<label class="f"><span>Nombre</span><input type="text" id="edf_nombre" value="' + esc(f.nombre) + '"></label>' +
+    '</div>' +
+    '<p class="tiny muted" style="margin:0">Cambiar la fecha cambia tambien a quien de Gerencia le toca ' +
+    'entrar, porque la alternancia va por orden de fecha.</p>';
+  modal('Editar el feriado', h,
+    '<button class="btn sec" onclick="refrescarFeriados()">Cancelar</button>' +
+    '<button class="btn" onclick="guardarFeriado(\'' + id + '\')">Guardar cambios</button>');
+}
+function guardarFeriado(id){
+  const f = (S.feriados || []).find(x => x.id === id);
+  if(!f) return;
+  const fecha = el('edf_fecha').value;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha)){ toast('Elige una fecha'); return; }
+  if((S.feriados || []).some(x => x.id !== id && x.fecha === fecha)){ toast('Ya hay un feriado ese dia'); return; }
+  f.fecha = fecha;
+  f.nombre = el('edf_nombre').value.trim() || 'Feriado';
+  S.feriados.sort((a,b) => a.fecha < b.fecha ? -1 : 1);
+  bitacora('Se corrigio el feriado ' + f.nombre + ' (' + f.fecha + ').');
+  guardar(); refrescarFeriados();
+  toast('Feriado corregido');
 }
 function borrarFeriado(id){
   const f = (S.feriados||[]).find(x => x.id === id);
   if(!f) return;
   S.feriados = S.feriados.filter(x => x.id !== id);
   bitacora('Se elimino el feriado ' + f.nombre + ' (' + f.fecha + ').');
-  guardar(); render(); toast('Feriado eliminado');
+  guardar(); refrescarFeriados(); toast('Feriado eliminado');
 }
 
 /* =====================================================================
@@ -8123,7 +8506,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-23-b';
+const SELLO_VERSION = '2026-08-24-h';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -8178,6 +8561,23 @@ function barraDiasHTML(){
   return h;
 }
 
+/* =====================================================================
+   MOVERSE POR LAS SEMANAS DESDE EL PANEL
+   La barra de arriba ya lo hace, pero queda lejos: agentes de servicio y
+   gerencia estan al final de la pagina y para cambiar de semana habia que
+   subir del todo y volver a bajar. Se repite aqui, mas pequena.
+
+   La semana es una sola para los tres horarios, asi que esto mueve la
+   pagina entera: es un atajo, no una semana aparte para cada equipo.
+   ===================================================================== */
+function navSemanaHTML(){
+  return '<span class="navsem">' +
+    '<button class="btn sec sm" onclick="cambiarSemana(-1)" title="Semana anterior">&larr; Anterior</button>' +
+    '<button class="btn sec sm" onclick="abrirCalendario()">Elegir semana</button>' +
+    '<button class="btn sec sm" onclick="cambiarSemana(1)" title="Semana siguiente">Siguiente &rarr;</button>' +
+    '</span>';
+}
+
 function tablaEquipo(eq, mapaConf, vacia){
   const info = infoEquipo(eq);
   const emps = plantilla(eq);
@@ -8196,7 +8596,16 @@ function tablaEquipo(eq, mapaConf, vacia){
     acc = '<button class="btn sm" onclick="accionCompletar()">' +
           (vacioEq ? 'Llenar este horario' : 'Completar lo que falta') + '</button>' +
           '<button class="btn sec sm" onclick="accionOtra()">Otra alternativa</button>' +
-          '<button class="btn sec sm" onclick="menuLimpiar()">Limpiar o vaciar</button>';
+          '<button class="btn sec sm" onclick="menuLimpiar()">Limpiar o vaciar</button>' +
+          /* Quien libra 2 dias. Solo tiene sentido con el reparto normal:
+             con el de dos grupos encendido no hay "uno por semana" que
+             cambiar, libra media plantilla. Se deja a la vista pero apagado
+             y diciendo por que, que es mas util que hacerlo desaparecer. */
+          (modoDosUno()
+            ? '<button class="btn sec sm" disabled title="Con el reparto de dos grupos libra media plantilla cada semana, no una sola persona">Quien libra 2 dias</button>'
+            : '<button class="btn sec sm" onclick="cambiarTurnoSemana()">Quien libra 2 dias' +
+              (S.semanas[SEMANA] && S.semanas[SEMANA].turno2 ? ' <span class="pill ok">a mano</span>' : '') +
+              '</button>');
   } else {
     /* Los tres paneles se manejan igual: llenar, otra alternativa y vaciar.
        En agentes de servicio la alternativa cambia el giro de los turnos y
@@ -8208,7 +8617,15 @@ function tablaEquipo(eq, mapaConf, vacia){
             (eq === 'servicio' ? 'otraAlternativaServicio()' : 'otraAlternativaSupervision()') +
           '">Otra alternativa</button>' +
           '<button class="btn sec sm"' + (vacioEq ? ' disabled' : '') +
-          ' onclick="vaciarEquipo(\'' + eq + '\')">Vaciar</button>';
+          ' onclick="vaciarEquipo(\'' + eq + '\')">Vaciar</button>' +
+          /* Los feriados solo salen aqui: son los que deciden quien de
+             Gerencia entra y quien libra, y se editan donde se ven. */
+          (eq === 'supervision'
+            ? '<button class="btn sec sm" onclick="verFeriados()">Dias feriados' +
+              (feriados().length ? ' <span class="pill off">' + feriados().length + '</span>' : '') +
+              '</button>'
+            : '') +
+          navSemanaHTML();
   }
   let h = '<section class="equipo ' + info.clase + '">' +
     '<div class="equipo-cab"><h2>' + esc(info.nombre) + '</h2>' +
@@ -8348,16 +8765,28 @@ function cambiarTurnoSemana(){
   if(!orden.length) return toast('No hay nadie en la rotacion');
 
   let h = '<p class="muted" style="margin-top:0">Semana del ' + fechaLarga(SEMANA) + ' al ' + fechaLarga(addDias(SEMANA,6)) + '.</p>' +
-    '<div class="alert info">Esto cambia <b>solo esta semana</b>. La rotacion sigue su curso normal a partir de la siguiente. ' +
-    'Si lo que quieres es correr la rotacion entera, hazlo en <b>Ajustes</b>.</div>';
-  orden.forEach(id => {
-    const e = empleado(id);
-    if(!e) return;
-    h += '<button class="opt' + (actual === id ? ' on' : '') + '" onclick="ponerTurnoSemana(\'' + id + '\')">' +
+    '<div class="alert info">Esto cambia <b>solo esta semana</b>. La rotacion sigue su curso normal a partir de la siguiente, ' +
+    'asi que a quien le tocaba no pierde su vuelta. Si lo que quieres es correr la rotacion entera, hazlo en <b>Ajustes</b>.</div>' +
+    '<p class="tiny muted">Al elegir se rehace el horario de la semana: los dias libres de los demas se recolocan solos.</p>';
+
+  const boton = (e, fuera) =>
+    '<button class="opt' + (actual === e.id ? ' on' : '') + '" onclick="ponerTurnoSemana(\'' + e.id + '\')">' +
       '<b>' + esc(e.nombre) + '</b>' +
+      (actual === e.id ? ' <span class="pill ok">esta semana</span>' : '') +
       (e.libreFijo >= 0 ? '<small>libra fijo los ' + DIAS[e.libreFijo].toLowerCase() + 's, asi que sus 2 dias incluiran ese</small>' : '') +
+      (fuera ? '<small>no entra en la rotacion; ponerlo aqui vale solo para esta semana</small>' : '') +
       '</button>';
-  });
+
+  h += '<h3>Los de la rotacion</h3>';
+  orden.forEach(id => { const e = empleado(id); if(e) h += boton(e, false); });
+
+  /* Quien no entra en la rotacion tambien se puede elegir: la regla dice
+     por donde va el turno, pero una semana suelta la decides tu. */
+  const fuera = activos().filter(e => orden.indexOf(e.id) < 0);
+  if(fuera.length){
+    h += '<h3 style="margin-top:12px">Fuera de la rotacion</h3>';
+    fuera.forEach(e => h += boton(e, true));
+  }
   if(w && w.turno2)
     h += '<button class="opt" style="margin-top:8px" onclick="ponerTurnoSemana(null)">' +
          'Volver a lo que dice la rotacion (<b>' + esc((empleado(turnoDosLibresRotacion(SEMANA))||{}).nombre || '-') + '</b>)</button>';
@@ -8377,8 +8806,27 @@ function ponerTurnoSemana(empId){
   bitacora(empId
     ? 'En la semana del ' + fechaLarga(SEMANA) + ' los 2 dias libres pasan a ' + empleado(empId).nombre + '.'
     : 'La semana del ' + fechaLarga(SEMANA) + ' vuelve al turno normal de la rotacion.');
-  guardar(); cerrar(); render();
-  toast(empId ? 'Esta semana libra 2 dias ' + empleado(empId).nombre : 'Vuelve al turno normal');
+  cerrar();
+  /* =================================================================
+     Y AHORA HAY QUE REHACER LA SEMANA
+     Cambiar de quien son los dos dias no sirve de nada si las casillas
+     se quedan como estaban: se veria el nombre nuevo en el aviso de
+     arriba y los dias libres seguirian donde estaban antes, que es
+     justo lo que parece un fallo. Lo publicado no se toca; lo que
+     pusiste a mano tampoco, que 'otraAlternativa' arranca de ahi.
+     ================================================================= */
+  const rehacer = w.estado !== 'publicado' && Object.keys(w.celdas || {}).length;
+  if(!rehacer){
+    guardar(); render();
+    toast(empId ? 'Esta semana libra 2 dias ' + empleado(empId).nombre : 'Vuelve al turno normal');
+    return;
+  }
+  toast('Rehaciendo la semana...');
+  setTimeout(function(){
+    try { otraAlternativa(SEMANA); } catch(e){}
+    guardar(); render();
+    toast((empId ? 'Libra 2 dias ' + empleado(empId).nombre : 'Vuelve al turno normal') + ' &middot; semana rehecha');
+  }, 60);
 }
 
 /* La celda de la tabla no es mas que el recuadro metido en un <td>. Se
@@ -8426,6 +8874,22 @@ function chipHTML(e, d, conf){
     }
     return '<div class="chip libre' + extra + '" draggable="true" data-e="' + e.id + '" data-d="' + d + '">' +
            '<span class="tags">' + tags + '</span>Libre' + enlace + '</div>';
+  }
+
+  /* La sombra: ni puesto ni marca, porque no cubre nada. Lo que importa
+     de esa casilla es a quien acompana, asi que eso es lo que se lee. */
+  /* La sombra se lee como cualquier otra casilla -turno, horas y la linea
+     de abajo- para que la tabla se recorra de un tiron. Lo unico que
+     cambia es esa linea: donde los demas llevan la marca, ella lleva
+     SOMBRA. No hay globo de ayuda a proposito: tapaba las casillas de al
+     lado justo cuando estas leyendo el horario. */
+  if(esSombra(c)){
+    const tipoColS = { temprano:'var(--t-temprano-b)', intermedio:'var(--t-intermedio-b)', tarde:'var(--t-tarde-b)' }[t.tipo] || 'var(--soft-2)';
+    return '<div class="chip sombra' + extra + '" draggable="true" ' +
+           'data-e="' + e.id + '" data-d="' + d + '"><span class="tags">' + tags + '</span>' +
+           esc(t.corto) + '<span class="h">' + hora12(t.inicio) + ' a ' + hora12(t.fin) + '</span>' +
+           '<span class="marca">Sombra</span>' +
+           '<span class="tipo" style="background:' + tipoColS + '"></span></div>';
   }
 
   const p = puesto(c.p);
@@ -8570,6 +9034,7 @@ function equipoVacio(eq, k){
    ===================================================================== */
 function menuCelda(empId, d){
   if(equipoDe(empId) !== 'rotativo') return menuCeldaSimple(empId, d);
+  if(haceSombra(empId)) return menuCeldaSombra(empId, d);
   const e = empleado(empId), c = celda(empId, d);
   const tipo = tipoSemana(SEMANA);
   let h = '<p class="muted" style="margin-top:0">' + DIAS[d] + ' ' + fechaCorta(addDias(SEMANA,d)) +
@@ -8672,6 +9137,77 @@ function menuCelda(empId, d){
    que se comprueba de verdad es el descanso entre turnos. El menu se
    queda en lo que hace falta y no en avisos que no vienen al caso.
    ===================================================================== */
+/* =====================================================================
+   EL MENU DE QUIEN HACE SOMBRA
+   No se le ensena la lista de puestos: no puede coger ninguno, y una
+   lista entera de botones que no hacen nada es peor que no tenerla. Lo
+   que si se le ensena son sus dos turnos, para elegir a mano el que
+   convenga ese dia.
+   ===================================================================== */
+function menuCeldaSombra(empId, d){
+  const e = empleado(empId), c = celda(empId, d);
+  const fer = feriadoEn(addDias(SEMANA, d));
+  let h = '<p class="muted" style="margin-top:0">' + DIAS[d] + ' ' + fechaCorta(addDias(SEMANA,d)) +
+          ' &middot; lleva ' + diasTrabajados(empId) + ' de ' + diasObjetivoDe(empId, SEMANA) + ' dias</p>';
+
+  h += '<div class="alert info"><b>' + esc(e.nombre) + ' esta en entrenamiento</b>' +
+       'Acompana para aprender: <b>no cubre un puesto</b> y no cuenta como cobertura, ' +
+       'asi que ponerlo en uno u otro turno no cambia nada de la operacion. ' +
+       'Elige el que veas mejor ese dia.</div>';
+
+  if(fer) h += '<div class="alert warn"><b>Es feriado: ' + esc(fer.nombre) + '</b>Revisa si ese dia conviene que venga.</div>';
+
+  if(c){
+    const t = turno(c.t);
+    h += '<div class="alert ' + (c.b ? 'ok' : 'info') + '"><b>Ahora: ' +
+         (c.t === LIBRE ? 'Libre' : 'Sombra en el ' + esc(t ? t.corto : '?')) + '</b>' +
+         (c.b ? 'Lo pusiste tu, el sistema no lo toca.' : 'Lo puso el sistema, se puede cambiar.') + '</div>';
+  }
+  if(diaReservado(empId, d))
+    h += '<div class="alert bad"><b>Ese dia lo tiene reservado en su ficha</b>' +
+         'Es un dia libre fijo, unas vacaciones o un dia en el que no esta disponible.</div>';
+
+  /* Un boton por turno. La lista se parte en dos: los dos de siempre
+     -los que el reparto le pone solo- y el resto del mostrador, que estan
+     ahi porque el usuario pidio poder ponerlo donde le convenga ese dia.
+     Cualquiera de ellos es acompanamiento: no ocupa plaza en ninguno. */
+  const propios = turnosDeSombra();
+  const otros = turnosDe('rotativo').filter(t => !propios.some(x => x.id === t.id));
+  const botonTur = (t) => {
+    const on = c && c.t === t.id;
+    const av = avisoDescanso(empId, d, t.id);
+    const compi = companeroDeSombra(ctxReal(SEMANA), d, t.id);
+    const quien = compi ? (empleado(compi) || {}).nombre : null;
+    return '<button class="opt' + (on ? ' on' : '') + '" style="margin-bottom:4px" ' +
+      'onclick="asignarSombra(\'' + empId + '\',' + d + ',\'' + t.id + '\')">' +
+      '<span class="pill ' + pillTipo(t.tipo) + '">' + esc(t.corto) + '</span> ' +
+      hora12(t.inicio) + ' a ' + hora12(t.fin) +
+      (quien ? ' <span class="tiny muted">acompana a ' + esc(quien) + '</span>'
+             : ' <span class="tiny muted">sin nadie en ese turno</span>') +
+      (av ? '<small style="color:var(--warn)">&#9888; ' + esc(av) + '</small>' : '') + '</button>';
+  };
+
+  h += '<h3>Sus dos turnos de siempre</h3>';
+  propios.forEach(t => h += botonTur(t));
+  if(otros.length){
+    h += '<h3 style="margin-top:12px">Cualquier otro turno del mostrador</h3>' +
+         '<p class="tiny muted" style="margin:-4px 0 6px">Estos no se los pone el reparto solo, pero puedes ' +
+         'ponerselos tu el dia que te convenga. Sigue siendo sombra: no ocupa plaza en ninguno.</p>';
+    otros.forEach(t => h += botonTur(t));
+  }
+
+  h += '<button class="opt' + (c && c.t === LIBRE ? ' on' : '') + '" style="margin-top:10px" ' +
+       'onclick="asignar(\'' + empId + '\',' + d + ',\'' + LIBRE + '\',null)">' +
+       '<span class="pill off">Libre</span> Marcar como dia libre</button>';
+  h += '<button class="opt" style="margin-top:4px" onclick="asignar(\'' + empId + '\',' + d + ',null,null)">' +
+       '<span class="pill off">Vaciar</span> Dejar la casilla en blanco</button>';
+
+  h += '<p class="tiny muted" style="margin:12px 0 0">Cuando ya no haga falta que acompane, en su ficha: ' +
+       '<b>Ya esta listo</b>. Ahi pasa a cubrir puestos como cualquiera.</p>';
+
+  modal('Casilla de ' + esc(e.nombre), h, '<button class="btn sec" onclick="cerrar()">Cerrar</button>');
+}
+
 function menuCeldaSimple(empId, d){
   const e = empleado(empId), c = celda(empId, d);
   const eq = equipoDe(empId);
@@ -8748,6 +9284,38 @@ function avisoDescanso(empId, d, turnoId){
   return 'Solo ' + hrs + ' horas desde el turno del dia anterior (el minimo es ' + S.config.descansoMin + ').';
 }
 /* Cambia la terminal y la marca sin tocar el turno */
+/* =====================================================================
+   PONER LA SOMBRA A MANO
+   Va aparte de 'asignar' a proposito: aqui no hay puesto que elegir ni
+   cobertura que cuadrar, porque la sombra no ocupa turno en la operacion.
+   Lo unico que se sigue mirando es lo que afecta a la persona: los dias
+   que tiene reservados y el descanso entre turnos. Y el descanso avisa,
+   no prohibe -tu decides-, que para eso es una eleccion tuya del dia.
+   ===================================================================== */
+function asignarSombra(empId, d, turnoId){
+  const aplicar = () => {
+    if(!ponerCelda(empId, d, turnoId, null, 'manual', true)){
+      toast('Ese dia lo tiene reservado en su ficha'); cerrar(); render(); return;
+    }
+    const c = celda(empId, d);
+    if(c){ c.sombra = true; c.con = null; }
+    cerrar(); guardar(); render();
+    toast('Sombra en el ' + ((turno(turnoId) || {}).corto || '') + '. No cuenta como cobertura.');
+  };
+  const av = avisoDescanso(empId, d, turnoId);
+  if(av){
+    modal('Poco descanso',
+      '<div class="alert warn"><b>' + esc(av) + '</b>' +
+      'Aunque solo vaya de acompanante, el descanso es de la persona.</div>' +
+      '<p class="muted">Puedes ponerlo igual si ese dia lo ves bien.</p>',
+      '<button class="btn sec" onclick="cerrar()">Mejor no</button>' +
+      '<button class="btn warn" id="oksom">Ponerlo igual</button>');
+    const b = el('oksom'); if(b) b.onclick = aplicar;
+    return;
+  }
+  aplicar();
+}
+
 function asignarPuesto(empId, d, puestoId){
   const c = celda(empId, d);
   if(!c || c.t === LIBRE){ toast('Primero elige un turno'); return; }
@@ -9507,6 +10075,44 @@ function pruebas(){
      E.filter(e => libresSemana(e.id, k) === 2 && !e.dosLibresFijos).length === (ROT.orden.length ? 1 : 0),
      'esta semana: ' + (empleado(turnoDosLibres(k)) || {}).nombre +
      (E.some(e => e.dosLibresFijos) ? '  (ademas ' + E.filter(e => e.dosLibresFijos).map(e => e.nombre).join(', ') + ' los tiene siempre)' : ''));
+  /* =================================================================
+     ELEGIR A MANO QUIEN LIBRA LOS DOS DIAS
+     El boton del panel de agentes de renta. Cambia SOLO esa semana: la
+     rotacion no se mueve, asi que a quien le tocaba no pierde su vuelta.
+     ================================================================= */
+  (function(){
+    if(ROT.orden.length < 2) return;
+    const kx = addDias(k, 8400);
+    const guardaSem = SEMANA;
+    const limpiar = () => { olvidarLibres(); olvidarRefuerzos(); olvidarObjetivoTipo(); };
+    SEMANA = kx; semana(kx); limpiar();
+
+    const porRotacion = turnoDosLibres(kx);
+    const otro = ROT.orden.find(id => id !== porRotacion);
+
+    semana(kx).turno2 = otro; olvidarSemana(kx); limpiar();
+    ok('Elegir a mano quien libra 2 dias cambia esa semana',
+       libresSemana(otro, kx) === 2 && libresSemana(porRotacion, kx) === 1,
+       (empleado(otro)||{}).nombre + ':' + libresSemana(otro, kx) + '  ' +
+       (empleado(porRotacion)||{}).nombre + ':' + libresSemana(porRotacion, kx));
+
+    ok('Y sigue siendo una sola persona la que libra dos',
+       activos().filter(x => libresSemana(x.id, kx) === 2 && !x.dosLibresFijos).length === 1,
+       activos().map(x => x.nombre + ':' + libresSemana(x.id, kx)).join(' '));
+
+    ok('La rotacion no se mueve: la semana siguiente sigue por donde iba',
+       turnoDosLibres(addDias(kx, 7)) === turnoDosLibresRotacion(addDias(kx, 7)),
+       'la que viene le toca a ' + (empleado(turnoDosLibresRotacion(addDias(kx,7)))||{}).nombre);
+
+    semana(kx).turno2 = null; olvidarSemana(kx); limpiar();
+    ok('Y se puede volver a lo que dice la rotacion',
+       turnoDosLibres(kx) === porRotacion,
+       'vuelve a ' + (empleado(porRotacion)||{}).nombre);
+
+    delete S.semanas[kx];
+    SEMANA = guardaSem; limpiar();
+  })();
+
   ok('A cada persona le tocan 2 o 1 dias libres, nunca otra cosa',
      E.every(e => [1,2].includes(libresSemana(e.id, k))),
      E.map(e => libresSemana(e.id, k)).join(','));
@@ -9536,13 +10142,15 @@ function pruebas(){
      E.filter(e => e.dosLibresFijos).map(e => e.nombre).join(', ') || 'nadie');
   ok('Los turnos que hay que cubrir cuadran con los puestos de la semana',
      (() => {
-       let trabajo = 0; E.forEach(e => trabajo += diasObjetivoDe(e.id, k));
+       /* Las sombras trabajan pero no abren puesto, asi que no entran en
+          esta cuenta: si entraran saldrian siempre mas turnos que puestos. */
+       let trabajo = 0; E.forEach(e => { if(!haceSombra(e)) trabajo += diasObjetivoDe(e.id, k); });
        let puestos = 0;
        for(let d = 0; d < 7; d++) for(const c of combinaciones()) puestos += cobNec(c.puestoId, c.turnoId, d, k);
        return trabajo === puestos;
      })(),
      (() => {
-       let trabajo = 0; E.forEach(e => trabajo += diasObjetivoDe(e.id, k));
+       let trabajo = 0; E.forEach(e => { if(!haceSombra(e)) trabajo += diasObjetivoDe(e.id, k); });
        let puestos = 0;
        for(let d = 0; d < 7; d++) for(const c of combinaciones()) puestos += cobNec(c.puestoId, c.turnoId, d, k);
        return trabajo + ' turnos y ' + puestos + ' puestos';
@@ -9823,8 +10431,11 @@ function pruebas(){
      S.turnos.every(t => Array.isArray(t.equipos) && t.equipos.length &&
        t.equipos.every(q => EQUIPO_IDS.includes(q))));
   ok('El counter no ve los turnos de supervision',
-     !turnosDe('rotativo').some(t => ['7-4','8-12','9-5'].includes(t.corto)),
+     !turnosDe('rotativo').some(t => ['7-4','8-12'].includes(t.corto)),
      turnosDe('rotativo').map(t => t.corto).join(' '));
+  ok('El 9-5 esta en el mostrador, pero solo para la sombra',
+     turnosDe('rotativo').some(t => t.corto === '9-5') &&
+     turnoSoloSombra((S.turnos.find(t => t.corto === '9-5') || {}).id));
   ok('Los agentes de servicio tienen sus cuatro turnos',
      ['7-3','9-5','3-11','11-7'].every(c => turnosDe('servicio').some(t => t.corto === c)),
      turnosDe('servicio').map(t => t.corto).join(' '));
@@ -10589,10 +11200,10 @@ function pruebas(){
      puesto que se abre: los puestos se abren por orden, asi que el que
      se cae cuando no dan las manos es siempre uno de la Terminal A y
      nunca la Terminal B.
-     Esos mismos dias las limitaciones del entrenamiento ceden: si quien
-     entrena no puede ir a la Terminal B ni ponerse el uniforme de
-     Hertz, un mostrador se queda sin nadie por una limitacion que solo
-     tiene sentido cuando hay gente de sobra.
+     Quien esta en entrenamiento NO entra en esa cuenta: hace sombra y no
+     cubre puesto, ni siquiera los dias de apuro. Por eso "cuatro
+     personas" aqui quiere decir cuatro que puedan cubrir, y la sombra va
+     ademas de esas cuatro.
      ================================================================= */
   (function(){
     const rot = S.empleados.filter(x => equipoDe(x) === 'rotativo');
@@ -10604,10 +11215,10 @@ function pruebas(){
     for(let i = 0; i < 60 && (S.semanas[kc] || S.semanas[addDias(kc,-7)]); i++) kc = addDias(kc, 7);
     const limpiar = () => { olvidarPrioridad(); olvidarRefuerzos(); olvidarLibres(); olvidarObjetivoTipo(); };
 
-    /* cuatro personas, y una de ellas la que esta en entrenamiento */
+    /* Cuatro que puedan cubrir, mas la sombra si la hay */
     const cuatro = [];
-    if(ent) cuatro.push(ent);
     rot.forEach(x => { if(cuatro.length < 4 && x !== ent) cuatro.push(x); });
+    if(ent) cuatro.push(ent);
     rot.forEach(x => x.activo = cuatro.indexOf(x) >= 0);
     SEMANA = kc; limpiar();
     semana(kc); otraAlternativa(kc);
@@ -10637,16 +11248,71 @@ function pruebas(){
        activos().every(x => libresSemana(x.id, kc) === 1),
        activos().map(x => x.nombre + ':' + libresSemana(x.id, kc)).join(' '));
 
-    if(ent) ok('Con cuatro personas las limitaciones del entrenamiento ceden',
-       (() => { for(let d = 0; d < 7; d++) if(!entrenoCede(ent, d, kc)) return false; return true; })(),
-       ent.nombre + ' puede hacer la Terminal B y Hertz mientras solo haya cuatro');
+    if(ent) ok('La sombra se puede poner a mano en cualquiera de sus dos turnos',
+       (() => {
+         const ts = turnosDeSombra();
+         if(ts.length < 2) return true;
+         const guardaSemNow = SEMANA; SEMANA = kc;
+         const antes = JSON.parse(JSON.stringify(semana(kc).celdas[ck(ent.id, 0)] || null));
+         let bien = true;
+         for(const t of ts){
+           /* La cuenta de cobertura ANTES de meter a la sombra. Se compara
+              con la de despues: lo que hay que ver es que la sombra no
+              suma, no que el turno este vacio -en el 3-11 hay dos agentes
+              de verdad y ahi la ocupacion nunca va a ser cero-. */
+           delete semana(kc).celdas[ck(ent.id, 0)];
+           const sinEl = ocupacion(ctxReal(kc), 0, t.id);
+           semana(kc).celdas[ck(ent.id, 0)] =
+             { t:t.id, p:null, o:'manual', b:true, sombra:true, con:null };
+           const c = celda(ent.id, 0, kc);
+           if(!(c && c.sombra && c.p === null && c.b === true)) bien = false;
+           if(ocupacion(ctxReal(kc), 0, t.id) !== sinEl) bien = false;
+         }
+         if(antes) semana(kc).celdas[ck(ent.id, 0)] = antes;
+         else delete semana(kc).celdas[ck(ent.id, 0)];
+         SEMANA = guardaSemNow;
+         return bien;
+       })(),
+       'los dos turnos valen y ninguno tapa un mostrador');
 
-    /* y en cuanto vuelve a haber gente, mandan otra vez */
+    if(ent) ok('Lo que se pone a mano en la sombra el reparto no lo pisa',
+       (() => {
+         const ts = turnosDeSombra();
+         if(!ts.length) return true;
+         const guardaSemNow = SEMANA; SEMANA = kc;
+         const antes = JSON.parse(JSON.stringify(semana(kc).celdas[ck(ent.id, 0)] || null));
+         semana(kc).celdas[ck(ent.id, 0)] =
+           { t:ts[ts.length-1].id, p:null, o:'manual', b:true, sombra:true, con:null };
+         const base = baseManual(kc);
+         const guardado = base[ck(ent.id, 0)];
+         if(antes) semana(kc).celdas[ck(ent.id, 0)] = antes;
+         else delete semana(kc).celdas[ck(ent.id, 0)];
+         SEMANA = guardaSemNow;
+         return !!(guardado && guardado.sombra && guardado.t === ts[ts.length-1].id);
+       })(),
+       'baseManual la conserva, asi que "Otra alternativa" la respeta');
+
+    if(ent) ok('Ni con cuatro personas cubre un puesto quien esta de sombra',
+       (() => { for(let d = 0; d < 7; d++){
+           const c = celda(ent.id, d, kc);
+           if(c && c.t !== LIBRE && !c.sombra) return false;
+         } return true; })(),
+       ent.nombre + ' acompana, no cubre, tampoco los dias de apuro');
+
+    if(ent) ok('La sombra sigue trabajando sus dias aunque no cubra',
+       (() => { let dias = 0;
+         for(let d = 0; d < 7; d++){ const c = celda(ent.id, d, kc); if(c && c.t !== LIBRE) dias++; }
+         return dias >= 1; })(),
+       (() => { let dias = 0;
+         for(let d = 0; d < 7; d++){ const c = celda(ent.id, d, kc); if(c && c.t !== LIBRE) dias++; }
+         return ent.nombre + ' trabaja ' + dias + ' dia(s) de sombra'; })());
+
+    /* y en cuanto vuelve a haber gente, todo sigue igual para la sombra */
     rot.forEach((x, i) => x.activo = guardaAct[i]);
     limpiar();
-    if(ent) ok('Con la plantilla completa el entrenamiento vuelve a mandar',
-       (() => { for(let d = 0; d < 7; d++) if(entrenoCede(ent, d, kc)) return false; return true; })(),
-       ent.nombre + ' no va a la Terminal B mientras haya con quien cubrirla');
+    if(ent) ok('El entrenamiento manda igual con la plantilla completa',
+       haceSombra(ent) && vetoPuestos(ent, 0, kc).length > 0,
+       ent.nombre + ' no va a la Terminal B ni con gente de sobra');
 
     SEMANA = guardaSem;
     delete S.semanas[kc];
@@ -10666,6 +11332,19 @@ function pruebas(){
     const t73  = turno(T['7-3']), t311 = turno(T['3-11']);
     if(!t73 || !t311) return;
     const pA = P['A - Hertz'];
+
+    ok('La vispera vale cualquier turno de manana, no solo el mas temprano',
+       (() => { const ext = extremosDelDia(1, k);
+         const t84 = turnosActivos().find(x => x.corto === '8-4');
+         if(!t84) return ext.mananas.length >= 1;
+         return ext.mananas.indexOf(min2(t73.inicio)) >= 0 &&
+                ext.mananas.indexOf(min2(t84.inicio)) >= 0 &&
+                ext.tardes.indexOf(min2(t311.inicio)) >= 0 &&
+                ext.tardes.indexOf(min2(t73.inicio)) < 0;
+       })(),
+       (() => { const ext = extremosDelDia(1, k);
+         const nom = (m) => { const x = turnosActivos().find(y => min2(y.inicio) === m); return x ? x.corto : m; };
+         return 'mananas: ' + ext.mananas.map(nom).join(', ') + '  //  tardes: ' + ext.tardes.map(nom).join(', '); })());
 
     ok('El primer y el ultimo turno del dia son el 7-3 y el 3-11',
        (() => { const ext = extremosDelDia(1, k);
