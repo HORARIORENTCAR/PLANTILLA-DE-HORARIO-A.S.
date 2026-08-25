@@ -797,7 +797,10 @@ function prioridadInicial(puestos, turnos){
        Turnos cruzados de la Terminal A, para amortiguar la carga del dia.
        Entran por este orden y solo si sobra gente; el dia que no la hay,
        sencillamente no se abren. */
-    { puestoId:P['A - Dollar Thrifty'], turnoId:T['12-8'], dias:todos.slice(), clave:false },
+    /* El 12-8 es de HERTZ, no de Dollar Thrifty. Es el sexto puesto del
+       dia: solo se abre cuando hay una sexta mano, o sea los dias en que
+       libra una sola persona. */
+    { puestoId:P['A - Hertz'], turnoId:T['12-8'], dias:todos.slice(), clave:false },
     { puestoId:P['A - Dollar Thrifty'], turnoId:T['8-4'],  dias:todos.slice(), clave:false }
   ];
 }
@@ -1152,7 +1155,7 @@ function datosDemo(){
 
   const k = lunesDe(hoyISO());
   return {
-    version: 26,
+    version: 27,
     empresa: 'ANDEL STAR',
     pin: '1234',
     config: {
@@ -2089,7 +2092,36 @@ function migrar(){
     }
     olvidarTodo();
   }
-  S.version = 26;
+  /* --- v27: el 12-8 pasa de Dollar Thrifty a Hertz --- */
+  if(!(S.version >= 27)){
+    const T = {}; S.turnos.forEach(t => T[t.corto] = t.id);
+    const pH  = S.puestos.find(x => x.terminal === 'A' && /^hertz$/i.test(x.nombre || ''));
+    const pDT = S.puestos.find(x => x.terminal === 'A' && /dollar/i.test(x.nombre || ''));
+    if(pH && pDT && T['12-8'] && Array.isArray(S.config.prioridad)){
+      const l = S.config.prioridad;
+      const i = l.findIndex(x => x.puestoId === pDT.id && x.turnoId === T['12-8']);
+      const ya = l.some(x => x.puestoId === pH.id && x.turnoId === T['12-8']);
+      if(i >= 0 && !ya) l[i].puestoId = pH.id;
+    }
+    /* Y las casillas ya puestas de los borradores, para que no se queden
+       con una marca que ese turno ya no usa. Lo publicado no se toca. */
+    let tocadas = 0;
+    if(pH && pDT && T['12-8']){
+      const desde = lunesDe(hoyISO());
+      Object.keys(S.semanas).forEach(kk => {
+        const w = S.semanas[kk];
+        if(!w || kk < desde || w.estado === 'publicado') return;
+        for(const key in (w.celdas || {})){
+          const c = w.celdas[key];
+          if(c && c.t === T['12-8'] && c.p === pDT.id){ c.p = pH.id; tocadas++; }
+        }
+      });
+    }
+    olvidarTodo();
+    bitacora('El turno de 12-8 pasa a ser de Hertz, en la Terminal A.' +
+             (tocadas ? ' Se cambiaron ' + tocadas + ' casilla(s) ya puestas.' : ''));
+  }
+  S.version = 27;
 }
 
 function cargar(){
@@ -2688,13 +2720,18 @@ function esRescateDeSombra(puestoId, turnoId){
   /* y que el puesto no sea de los que tiene vetados en su ficha */
   return true;
 }
-/* La sombra que ese dia puede echar una mano en el 10-6 */
-function sombraDisponible(d, k, puestoId){
+/* La sombra que ese dia puede echar una mano en el 10-6.
+   Con 'ctx' se mira ademas que no se le pase de sus dias: quien esta
+   aprendiendo libra como todo el mundo, y sin esta cuenta acababa la
+   semana con siete dias seguidos y ningun descanso -salia a rescatar
+   todos los dias porque siempre habia un hueco que tapar-. */
+function sombraDisponible(d, k, puestoId, ctx){
   for(const e of activos()){
     if(!haceSombra(e)) continue;
     if(ausenteEnDia(e.id, d, k)) continue;
     if(fijoVigente(e, k) === d) continue;            // su dia libre fijo
     if((e.puestosProhibidos || []).indexOf(puestoId) >= 0) continue;
+    if(ctx && diasTrabCtx(ctx, e.id) >= diasObjetivoDe(e.id, k)) continue;   // ya tiene sus dias
     return e;
   }
   return null;
@@ -3219,18 +3256,25 @@ function sombrasPorDia(k){
 function trabajanDia(d, k){
   k = k || SEMANA;
   const base = Math.max(0, cubrenDia(d, k) - (libranPorDia(k)[d] || 0));
-  /* La sombra suma UNA mano, y SOLO los dias en que las de verdad no
-     llegan a los principales. Si sumara siempre, cada dia se abriria un
-     puesto de mas: los agentes se repartirian entre seis sitios en vez de
-     cinco y el 10-6 le quedaria a la sombra casi todos los dias, que es
-     lo contrario de lo que se busca. El rescate es para tapar un hueco,
-     no para darle un turno fijo a quien esta aprendiendo. */
+  /* =================================================================
+     LA MANO DE LA SOMBRA: ULTIMO RECURSO Y NADA MAS
+     Solo suma el dia en que los agentes de verdad NO llegan a los
+     puestos principales. Ese dia se saca a la sombra, y solo para el
+     10-6. Si los agentes llegan, la sombra se queda acompanando.
+
+     No tiene nada que ver con el 12-8: que ese turno entre o no es otra
+     regla, mas abajo. Juntarlas fue un error -sacaba a la sombra para
+     llegar a seis y abrir el 12-8, que es justo lo contrario de tenerla
+     aprendiendo-.
+     ================================================================= */
   const nuc = nucleoDia(d, k);
   if(base >= nuc) return base;
   return base + (sombraDeRescateHoy(d, k) ? 1 : 0);
 }
-/* ¿Ese dia el 10-6 depende de la sombra? Es decir: las manos de verdad no
-   llegan a los principales y hay una sombra que puede tapar ese puesto. */
+/* ¿Ese dia sale la sombra a hacer el 10-6? Tiene que decir lo MISMO que
+   'trabajanDia', que es quien decide cuantos puestos se abren: si las dos
+   cuentas no coinciden, salen mas puestos que manos y el aviso marca en
+   rojo semanas que estan enteras. */
 function rescateHaceFaltaHoy(d, k){
   k = k || SEMANA;
   const base = Math.max(0, cubrenDia(d, k) - (libranPorDia(k)[d] || 0));
@@ -3387,10 +3431,41 @@ function cob(puestoId, turnoId){
    puestos que se abren ese dia (tantos como gente trabaje), hace falta.
    Si no, ese dia no se abre y no cuenta como "sin cubrir".
    ===================================================================== */
+/* =====================================================================
+   LA CONDICION DEL 12-8
+   El usuario la puso como regla propia, no como consecuencia de cuanta
+   gente haya: el 12-8 de Hertz entra unicamente los dias en que hay
+   SEIS trabajando y UNA sola persona librando. Cualquier otro dia no se
+   usa, y el horario sigue con las reglas de siempre aunque queden
+   cuatro personas.
+   ===================================================================== */
+function cabeEl128(d, k){
+  k = k || SEMANA;
+  if(trabajanDia(d, k) !== 6) return false;
+  /* Librando se cuentan todos, tambien quien esta de sombra: lo que pide
+     la regla es que ese dia haya una sola persona fuera del mostrador.
+
+     Y se cuentan del PLAN de descansos, no de las casillas. Mirar las
+     casillas aqui crea una pescadilla que se muerde la cola: los puestos
+     que se abren dependerian de las casillas ya colocadas, y las casillas
+     de los puestos que se abren. Se noto enseguida -los dos dias libres
+     seguidos salian partidos, un miercoles y un sabado-. */
+  let libran = libranPorDia(k)[d] || 0;              // los que cubren
+  activos().forEach(e => {
+    if(!haceSombra(e) || ausenteEnDia(e.id, d, k)) return;
+    if((librePrevistoDe(e.id, k) || []).indexOf(d) >= 0) libran++;
+  });
+  return libran === 1;
+}
+function esTurno128(turnoId){
+  const t = turno(turnoId);
+  return !!(t && t.corto === '12-8');
+}
 function cobNec(puestoId, turnoId, d, k){
   const lista = prioridadDia(d, k);
   const i = lista.findIndex(x => x.puestoId === puestoId && x.turnoId === turnoId);
   if(i < 0) return 0;
+  if(esTurno128(turnoId) && !cabeEl128(d, k)) return 0;
   return i < puestosDia(d, k) ? 1 : 0;
 }
 /* Si ese puesto es de los principales */
@@ -5036,7 +5111,7 @@ function rescatarTurno(ctx, k){
       if(!x.clave) continue;
       if(!esRescateDeSombra(x.puestoId, x.turnoId)) continue;
       if(ocupacion(ctx, d, x.turnoId, x.puestoId) >= 1) continue;   // ya hay alguien
-      const e = sombraDisponible(d, k, x.puestoId);
+      const e = sombraDisponible(d, k, x.puestoId, ctx);
       if(!e) continue;
       const clave = ck(e.id, d);
       const prev = ctx.celdas[clave];
@@ -8735,7 +8810,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-25-c';
+const SELLO_VERSION = '2026-08-25-f';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -10652,6 +10727,43 @@ function pruebas(){
   const ev = autocompletar(k);
   const c0 = celda(E[0].id, 0, k);
   ok('Respeta lo que pusiste a mano', c0 && c0.t === T['3-11'] && c0.p === P['A - Hertz'] && c0.b === true);
+  /* =================================================================
+     EL 12-8 SOLO CON SEIS EN EL MOSTRADOR
+     La regla que puso el usuario: el sexto puesto entra unicamente los
+     dias que hay seis manos, contando a la sombra el dia que sale a hacer
+     el 10-6. Ni con cinco ni con siete.
+     ================================================================= */
+  (function(){
+    const t128 = S.turnos.find(x => x.corto === '12-8');
+    if(!t128) return;
+    const manosDe = (d) => {
+      let m = 0;
+      activos().forEach(x => {
+        const c = celda(x.id, d, k);
+        if(!c || c.t === LIBRE || esAusencia(c) || c.sombra || esMediaTanda(c.t)) return;
+        m++;
+      });
+      return m;
+    };
+    const hay128 = (d) => activos().some(x => { const c = celda(x.id, d, k); return c && c.t === t128.id; });
+    ok('El 12-8 sale solo los dias que hay seis en el mostrador',
+       (() => { for(let d = 0; d < 7; d++) if(hay128(d) !== (manosDe(d) === 6)) return false; return true; })(),
+       (() => { const o = [];
+         for(let d = 0; d < 7; d++) o.push(DIAS_CORTO[d] + ':' + manosDe(d) + (hay128(d) ? '+12-8' : ''));
+         return o.join(' '); })());
+    ok('Y cuando sale, es de Hertz y de la Terminal A',
+       (() => { for(let d = 0; d < 7; d++){
+           for(const x of activos()){ const c = celda(x.id, d, k);
+             if(!c || c.t !== t128.id) continue;
+             const p = puesto(c.p);
+             if(!p || p.terminal !== 'A' || !/^hertz$/i.test(p.nombre || '')) return false; }
+         } return true; })(),
+       (() => { const o = [];
+         for(let d = 0; d < 7; d++) for(const x of activos()){ const c = celda(x.id, d, k);
+           if(c && c.t === t128.id) o.push(DIAS_CORTO[d] + ' ' + ((puesto(c.p)||{}).corto || '?')); }
+         return o.length ? o.join(', ') : 'esa semana no salio'; })());
+  })();
+
   ok('Llena toda la semana sin dejar puestos vacios', ev.eq.faltan === 0, ev.eq.faltan + ' sin cubrir');
   ok('No deja conflictos', ev.rev.conflictos.length === 0,
      ev.rev.conflictos.slice(0,2).map(x => x.texto).join(' | '));
@@ -11325,10 +11437,14 @@ function pruebas(){
        e.nombre + ': ' + diasObjetivoDe(e.id, ka) + ' dias de trabajo');
     ok('Los dias fuera no cuentan como dias libres',
        libresSemana(e.id, ka) === 0 && equidad(ctxReal(ka)).filas.find(f => f.empId === e.id).libres === 0);
+    /* Con uno de vacaciones quedan cinco agentes y la sombra. La sombra
+       tambien libra su dia -eso no se negocia-, y el dia que descansa
+       puede quedar un puesto sin tapar. Se admite UNO como mucho: mas de
+       uno ya seria que el reparto no esta aprovechando la semana. */
     ok('Con una persona fuera la semana sigue cuadrando sola',
        (() => {
          const eq = equidad(ctxReal(ka)), rev = revisar(ctxReal(ka));
-         return eq.faltan === 0 && rev.conflictos.length === 0 && faltanManos(ka) === 0;
+         return eq.faltan <= 1 && rev.conflictos.length === 0 && faltanManos(ka) <= 1;
        })(),
        (() => { let t = 0, p = 0;
          activos().forEach(x => { if(!haceSombra(x)) t += diasObjetivoDe(x.id, ka); });
@@ -11582,9 +11698,21 @@ function pruebas(){
          for(let d = 0; d < 7; d++) if(ocupacion(ctxC, d, tB.id, pB.id) < 1) return false;
          return true; })());
 
-    ok('Con cuatro personas no queda ningun puesto principal sin cubrir',
-       principalesSinCubrir(kc) === 0 && revisar(ctxC).conflictos.length === 0,
+    /* Cuatro agentes y la sombra: cada uno de los cuatro libra su dia y la
+       sombra tambien. El dia que descansa la sombra no hay quien tape el
+       10-6, asi que puede quedar uno sin cubrir. Es aritmetica, y antes
+       que dejar a quien aprende siete dias seguidos se prefiere avisar. */
+    ok('Con cuatro personas no queda mas de un puesto principal sin cubrir',
+       principalesSinCubrir(kc) <= 1 && revisar(ctxC).conflictos.length === 0,
        principalesSinCubrir(kc) + ' sin cubrir y ' + revisar(ctxC).conflictos.length + ' conflicto(s)');
+
+    if(ent) ok('La sombra libra su dia aunque falte gente',
+       (() => { let libres = 0;
+         for(let d = 0; d < 7; d++) if(esLibreReal(celda(ent.id, d, kc))) libres++;
+         return libres >= 1; })(),
+       (() => { let libres = 0;
+         for(let d = 0; d < 7; d++) if(esLibreReal(celda(ent.id, d, kc))) libres++;
+         return ent.nombre + ' libra ' + libres + ' dia(s)'; })());
 
     ok('Con cuatro personas se acaba el turno de dos dias libres: cada uno libra uno',
        activos().every(x => libresSemana(x.id, kc) === 1),
