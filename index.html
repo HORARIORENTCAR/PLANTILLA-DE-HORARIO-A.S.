@@ -1155,7 +1155,7 @@ function datosDemo(){
 
   const k = lunesDe(hoyISO());
   return {
-    version: 27,
+    version: 28,
     empresa: 'ANDEL STAR',
     pin: '1234',
     config: {
@@ -2121,7 +2121,29 @@ function migrar(){
     bitacora('El turno de 12-8 pasa a ser de Hertz, en la Terminal A.' +
              (tocadas ? ' Se cambiaron ' + tocadas + ' casilla(s) ya puestas.' : ''));
   }
-  S.version = 27;
+  /* --- v28: la mano de la sombra entra en la cuenta de los dias libres --- */
+  if(!(S.version >= 28)){
+    /* La cuenta de los dias libres no sumaba los dias que la sombra sale a
+       tapar el 10-6, y con cinco personas en el mostrador el segundo dia
+       seguido no llegaba a caber NUNCA: la rotacion nombraba a quien le
+       tocaba -se leia arriba, en el aviso- pero la hoja se lo recortaba.
+       Los borradores ya armados se quedaron con ese reparto, asi que hay
+       que rehacerlos. Lo publicado y lo pasado no se toca.
+       Se hace despues de cargar, no aqui: rehacer una semana usa medio
+       programa y aqui todavia no esta todo en pie. */
+    olvidarTodo();
+    setTimeout(function(){
+      try {
+        const cuantas = rehacerBorradoresProximos();
+        if(cuantas){ guardar(); render();
+          toast(cuantas > 1 ? cuantas + ' semanas rehechas: vuelve la rotacion de los 2 dias'
+                            : 'Semana rehecha: vuelve la rotacion de los 2 dias'); }
+      } catch(e){}
+    }, 500);
+    bitacora('Los dias que quien hace sombra sale a cubrir el ' + TURNO_RESCATE + ' ya cuentan como trabajo. ' +
+             'Sin eso, con cinco personas en el mostrador el segundo dia libre seguido no cabia y la rotacion parecia parada.');
+  }
+  S.version = 28;
 }
 
 function cargar(){
@@ -2532,7 +2554,28 @@ function libresPorPersona(k){
      de descanso, asi que meterla en la misma bolsa recortaba el segundo
      dia seguido de otro para pagar el suyo, que no costaba nada. */
   const cubren = () => info.filter(x => !x.sombra);
-  const trabajo = () => cubren().reduce((n, x) => n + (x.disp - x.libres), 0);
+  /* ...con una excepcion: los dias que la sombra sale de sombra para tapar
+     el 10-6 SI son un puesto cubierto, y hay que sumarlos. El resto de las
+     cuentas de la aplicacion ya los suman (cupoLibresIdeal, faltanManos,
+     manosPrevistas); esta se habia quedado sin ello y salia corta.
+     Lo que costaba: con cinco que cubrieran, la cuenta pedia 34 dias de
+     trabajo y solo veia 35 disponibles, asi que el segundo dia seguido no
+     cabia NUNCA. La rotacion seguia nombrando a quien le tocaba -se leia
+     arriba, en el aviso- pero al llegar a la hoja se le habia recortado.
+     Desde fuera parecia que la rotacion se habia parado.
+     Se cuenta por lo alto: los dias que la sombra PUEDE salir, sin pasar
+     de los dias que de verdad tiene libres para trabajar. No se puede
+     preguntar dia a dia si hace falta, porque eso obliga a mirar quien
+     libra, que es justo lo que se esta decidiendo aqui. */
+  const manoSombra = (function(){
+    let puede = 0;
+    for(let d = 0; d < 7; d++) if(sombraDeRescateHoy(d, k)) puede++;
+    if(!puede) return 0;
+    const tope = info.filter(x => x.sombra)
+                     .reduce((m, x) => m + Math.max(0, x.disp - x.libres), 0);
+    return Math.min(puede, tope);
+  })();
+  const trabajo = () => cubren().reduce((n, x) => n + (x.disp - x.libres), 0) + manoSombra;
 
   /* Cuantos dias libres caben en la semana: la suma de lo que aguanta
      cada dia sin dejar los puestos principales sin gente que los haga. */
@@ -8849,7 +8892,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-25-h';
+const SELLO_VERSION = '2026-08-25-i';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -12072,6 +12115,39 @@ function pruebas(){
          return g.a.indexOf(ent.id) >= 0 || g.b.indexOf(ent.id) >= 0;
        })(),
        (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
+    /* La rotacion de los 2 dias no se puede parar por la plantilla justa.
+       Con cinco en el mostrador y una sombra, la cuenta salia corta -no
+       sumaba los dias que la sombra tapa el 10-6- y el segundo dia se le
+       recortaba a quien le tocaba, semana tras semana. */
+    (function(){
+      const cubren = E.filter(x => !haceSombra(x));
+      if(cubren.length < 5 || !E.some(x => haceSombra(x))) return;
+      const apagados = cubren.slice(5);
+      apagados.forEach(x => x.activo = false);
+      /* Con el interruptor de los dos grupos encendido manda el grupo y no
+         el turno, y lo que se mira aqui es justo el turno. */
+      const guardaDosUno = S.config.modoDosUno; S.config.modoDosUno = false;
+      olvidarTodo();
+      const nombres = [], faltas = [];
+      /* Semanas de mas adelante, sin armar y sin nadie de vacaciones: lo que
+         se mira aqui es el reparto en si, no como lo ajusta una ausencia. */
+      const creadas = [];
+      for(let n = 0; n < 6; n++){
+        const kx = addDias(k, 6300 + 7*n);
+        creadas.push(kx);
+        const toca = turnoDosLibres(kx);
+        const lib = libresPorPersona(kx);
+        nombres.push((empleado(toca)||{}).nombre + ':' + lib[toca]);
+        if(!toca || lib[toca] !== 2) faltas.push((empleado(toca)||{}).nombre || '?');
+      }
+      ok('Con cinco en el mostrador la rotacion de los 2 dias sigue semana a semana',
+         faltas.length === 0, nombres.join(' '));
+      creadas.forEach(kx => delete S.semanas[kx]);
+      apagados.forEach(x => x.activo = true);
+      S.config.modoDosUno = guardaDosUno;
+      olvidarTodo();
+    })();
+
     /* Sacar a la sombra a mano para el 10-6: tiene que poder hacerse
        cuantas veces se quiera, quedar como cobertura de verdad y no
        perderse al rehacer la semana. */
