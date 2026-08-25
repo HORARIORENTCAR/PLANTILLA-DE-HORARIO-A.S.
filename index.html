@@ -627,9 +627,14 @@ function mezcla(color, destino, t){
 function tonosPuesto(p){
   const base = (p && p.fondo) ? p.fondo : '#7a8496';
   return {
+    /* El fondo va tenido, no relleno: la tabla tiene doce filas por siete
+       columnas y a todo color se vuelve un tablero que cansa de leer.
+       Estos numeros son el punto en que la marca se reconoce de un
+       vistazo sin que el texto pierda contraste; se subieron un poco el
+       24 de agosto de 2026 porque desde lejos los tres se parecian. */
     c:    base,                              // la barra de la izquierda
-    bg:   mezcla(base, '#ffffff', 0.87),     // fondo tenido, lo justo para distinguirse
-    line: mezcla(base, '#ffffff', 0.60),     // filete del borde
+    bg:   mezcla(base, '#ffffff', 0.79),     // fondo tenido, lo justo para distinguirse
+    line: mezcla(base, '#ffffff', 0.52),     // filete del borde
     txt:  mezcla(base, '#1c1c1c', 0.20)      // nombre de la marca
   };
 }
@@ -8506,7 +8511,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-24-h';
+const SELLO_VERSION = '2026-08-24-i';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
