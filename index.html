@@ -2891,21 +2891,54 @@ function sabeCubrirNucleoBase(e, d, k){
     vt.indexOf(x.turnoId)  < 0) &&
     e.diasDisponibles[d] !== false;
 }
+/* =====================================================================
+   CUANDO SE FUSIONA LA TERMINAL B
+   Lo primero que se intenta siempre es cubrir LAS CUATRO PUNTAS -la
+   manana y la tarde de cada terminal-, que es lo que abre y cierra los
+   dos mostradores. El turno unico de 11-7 en la B es la salida de
+   emergencia, y se usa lo menos posible.
+
+   Con CUATRO agentes ya no se fusiona: los cuatro hacen las cuatro
+   puntas y la sombra sale para el 10-6, con lo que el dia queda con
+   cinco manos y los dos mostradores abiertos de punta a punta. Solo por
+   debajo de cuatro se recurre al 11-7, porque ahi no hay manos ni para
+   las puntas.
+
+   Aqui no se puede preguntar por los dias libres ni por 'trabajanDia':
+   ellos preguntan por los puestos del dia, que es justo lo que se decide
+   aqui, y seria una pescadilla que se muerde la cola. Solo se miran las
+   ausencias y los dias fijos, que no dependen de nada.
+   ===================================================================== */
+const PUNTAS = 4;              // las dos mananas y las dos tardes
 function esPlantillaCorta(d, k){
   k = k || SEMANA;
-  /* El caso que describio el usuario: solo quedan cuatro personas. */
-  if(disponiblesDia(d, k) <= PLANTILLA_CORTA) return true;
-  /* Y el mismo problema con otra cara: hay cinco, pero uno de ellos no puede
-     hacer ninguno de los principales (por ejemplo alguien en entrenamiento).
-     Entonces quedan cuatro aptos, uno de ellos libra, y otra vez son tres
-     manos para cuatro puestos. Se aplica la misma solucion. */
+  /* Agentes de verdad ese dia -la sombra no sostiene ninguna punta-.
+
+     Se cuenta la PLANTILLA presente, no quien trabaja: los dias libres no
+     se pueden mirar aqui. Esto se pregunta en dos momentos -al repartir
+     los descansos y al repartir los turnos- y tiene que contestar lo
+     mismo en los dos; si mirara los dias libres, en el primer momento
+     todavia no existen y en el segundo si, las dos fases se
+     contradecirian y los dos dias de descanso seguidos salen partidos
+     (probado: lunes y miercoles en vez de pegados).
+
+     El umbral son CINCO presentes, no cuatro, y por eso: con cinco en
+     plantilla libra uno al dia y quedan cuatro trabajando, que es justo
+     lo que hace falta para las cuatro puntas -la sombra pone la quinta
+     mano en el 10-6-. Con cuatro presentes quedarian tres, y ahi si hay
+     que fusionar la Terminal B en el 11-7. */
+  let hay = 0;
+  activos().forEach(e => { if(!haceSombra(e) && !ausenteEnDia(e.id, d, k)) hay++; });
+  if(hay <= PUNTAS) return true;
+  /* Y los que ademas PUEDEN hacer una punta: no vale contar cabezas si
+     una de ellas tiene vetada la Terminal B o la marca de Hertz. */
   let aptos = 0;
   activos().forEach(e => {
     if(ausenteEnDia(e.id, d, k)) return;
     if(e.libreFijo === d) return;
     if(sabeCubrirNucleoBase(e, d, k)) aptos++;
   });
-  return aptos <= PLANTILLA_CORTA;
+  return aptos <= PUNTAS;
 }
 /* Los puestos que se pueden abrir ese dia, ya en orden */
 function prioridadDia(d, k){
@@ -5381,9 +5414,15 @@ function construir(k, base, azar){
    busca a alguien libre ese dia que ya llego a sus dias, le pasa uno de sus
    turnos a un companero con dias de sobra, y lo coloca en el puesto vacio. */
 function reparar(ctx, k, s){
+  /* Los dias libres que puso el reparto llevan 'fijo' y NO se tocan. Sin
+     esa comprobacion, para tapar un puesto se le quitaba a alguien un dia
+     libre del plan y se le devolvia en otro dia: a quien llevaba los dos
+     dias seguidos se le partia el bloque (salia lunes y miercoles en vez
+     de pegados). 'repararDia', que hace lo mismo dentro de un solo dia, ya
+     lo comprobaba; a esta se le habia pasado. */
   const libresEseDia = activos().filter(e => {
     const c = ctx.celdas[ck(e.id, s.d)];
-    return !c || (c.t === LIBRE && c.o !== 'manual' && !c.b);
+    return !c || (c.t === LIBRE && !c.fijo && c.o !== 'manual' && !c.b);
   });
   for(const x of libresEseDia){
     const guardado = ctx.celdas[ck(x.id, s.d)];
@@ -8810,7 +8849,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-25-f';
+const SELLO_VERSION = '2026-08-25-h';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -9504,8 +9543,9 @@ function menuCeldaSombra(empId, d){
 
   h += '<div class="alert info"><b>' + esc(e.nombre) + ' esta en entrenamiento</b>' +
        'Acompana para aprender: <b>no cubre un puesto</b> y no cuenta como cobertura, ' +
-       'asi que ponerlo en uno u otro turno no cambia nada de la operacion. ' +
-       'Elige el que veas mejor ese dia.</div>';
+       'asi que ponerlo en uno u otro turno de sombra no cambia nada de la operacion. ' +
+       'Si ese dia hace falta una mano, puedes <b>sacarlo de sombra para el ' + esc(TURNO_RESCATE) +
+       '</b> aqui abajo.</div>';
 
   if(fer) h += '<div class="alert warn"><b>Es feriado: ' + esc(fer.nombre) + '</b>Revisa si ese dia conviene que venga.</div>';
 
@@ -9540,6 +9580,27 @@ function menuCeldaSombra(empId, d){
              : ' <span class="tiny muted">sin nadie en ese turno</span>') +
       (av ? '<small style="color:var(--warn)">&#9888; ' + esc(av) + '</small>' : '') + '</button>';
   };
+
+  /* --- sacarlo de sombra para el 10-6 --- */
+  (function(){
+    const tR = (S.turnos || []).find(x => x.corto === TURNO_RESCATE && x.activo);
+    const pR = puestosActivos().find(x => x.terminal === 'A' && /dollar/i.test(x.nombre || ''));
+    if(!tR || !pR) return;
+    const cubriendo = c && !c.sombra && c.t !== LIBRE && esRescateDeSombra(c.p, c.t);
+    h += '<h3>Sacarlo de sombra para el ' + esc(tR.corto) + '</h3>' +
+      '<p class="tiny muted" style="margin:-4px 0 6px">Ese dia deja de acompanar y <b>cubre el puesto de ' +
+      esc(pR.corto) + '</b> como un agente mas. El resto de la semana sigue de sombra. ' +
+      'Puedes hacerlo los dias que quieras.</p>' +
+      '<button class="opt' + (cubriendo ? ' on' : '') + '" style="margin-bottom:4px" ' +
+      'onclick="asignarRescate(\'' + empId + '\',' + d + ')">' +
+      '<span class="pill ' + pillTipo(tR.tipo) + '">' + esc(tR.corto) + '</span> ' +
+      hora12(tR.inicio) + ' a ' + hora12(tR.fin) +
+      ' <span class="tiny muted">' + esc(pR.corto) + ' &middot; cubre de verdad</span></button>';
+    if(cubriendo)
+      h += '<button class="opt" style="margin-bottom:4px" ' +
+        'onclick="volverASombra(\'' + empId + '\',' + d + ')">' +
+        '<span class="pill off">Sombra</span> Devolverlo al acompanamiento</button>';
+  })();
 
   h += '<h3>Sus dos turnos de siempre</h3>';
   propios.forEach(t => h += botonTur(t));
@@ -9646,6 +9707,44 @@ function avisoDescanso(empId, d, turnoId){
    que tiene reservados y el descanso entre turnos. Y el descanso avisa,
    no prohibe -tu decides-, que para eso es una eleccion tuya del dia.
    ===================================================================== */
+/* =====================================================================
+   SACARLO DE SOMBRA A MANO PARA EL 10-6
+   El reparto ya lo hace solo cuando falta una mano, pero el usuario tiene
+   que poder hacerlo cuando quiera y las veces que quiera: hay dias en que
+   se decide sobre la marcha. Queda como una casilla de verdad -cubre el
+   puesto y cuenta como cobertura-, marcada como puesta a mano para que
+   'Otra alternativa' no la pise.
+   ===================================================================== */
+function asignarRescate(empId, d){
+  const t = (S.turnos || []).find(x => x.corto === TURNO_RESCATE && x.activo);
+  const p = puestosActivos().find(x => x.terminal === 'A' && /dollar/i.test(x.nombre || ''));
+  if(!t || !p){ toast('No existe el turno de ' + TURNO_RESCATE); return; }
+  if(!ponerCelda(empId, d, t.id, p.id, 'manual', true)){
+    toast('Ese dia lo tiene reservado en su ficha'); cerrar(); render(); return;
+  }
+  const c = celda(empId, d);
+  if(c){ c.rescate = true; delete c.sombra; delete c.con; }
+  cerrar();
+  toast('Fuera de sombra en el ' + t.corto + '. Recomponiendo el dia...');
+  setTimeout(function(){
+    let faltan = 0;
+    /* Se rehace desde lo que hay a mano: al entrar el como una mano mas,
+       los demas se recolocan y puede que ya no haga falta el 11-7. */
+    try { const ev = otraAlternativa(SEMANA); faltan = ev.eq.faltan; } catch(e){}
+    bitacora((empleado(empId)||{}).nombre + ' sale de sombra el ' +
+             fechaLarga(addDias(SEMANA, d)) + ' para cubrir el ' + t.corto + '.');
+    guardar(); render();
+    toast(faltan ? 'Puesto el ' + t.corto + ' &middot; quedan ' + faltan + ' puesto(s) sin cubrir'
+                 : 'Puesto el ' + t.corto + ' &middot; el dia quedo cubierto');
+  }, 60);
+}
+/* Devolverlo al acompanamiento */
+function volverASombra(empId, d){
+  const ts = turnosDeSombra();
+  if(!ts.length){ toast('No hay turnos de sombra'); return; }
+  asignarSombra(empId, d, ts[0].id);
+}
+
 function asignarSombra(empId, d, turnoId){
   const aplicar = () => {
     if(!ponerCelda(empId, d, turnoId, null, 'manual', true)){
@@ -10746,10 +10845,26 @@ function pruebas(){
       return m;
     };
     const hay128 = (d) => activos().some(x => { const c = celda(x.id, d, k); return c && c.t === t128.id; });
-    ok('El 12-8 sale solo los dias que hay seis en el mostrador',
-       (() => { for(let d = 0; d < 7; d++) if(hay128(d) !== (manosDe(d) === 6)) return false; return true; })(),
+    /* La regla del usuario tiene DOS mitades y hay que comprobar las dos:
+       seis en el mostrador Y una sola persona librando. Un dia con seis
+       trabajando pero nadie librando -porque quien esta de sombra ni
+       trabaja el mostrador ni libra- no cumple, y el 12-8 no entra. */
+    const libranDe = (d) => {
+      let x = 0;
+      activos().forEach(e => {
+        if(ausenteEnDia(e.id, d, k)) return;        // de vacaciones no es 'librando'
+        const c = celda(e.id, d, k);
+        if(!c || c.t === LIBRE) x++;
+      });
+      return x;
+    };
+    ok('El 12-8 sale solo con seis en el mostrador y uno librando',
+       (() => { for(let d = 0; d < 7; d++){
+           const cumple = manosDe(d) === 6 && libranDe(d) === 1;
+           if(hay128(d) !== cumple) return false;
+         } return true; })(),
        (() => { const o = [];
-         for(let d = 0; d < 7; d++) o.push(DIAS_CORTO[d] + ':' + manosDe(d) + (hay128(d) ? '+12-8' : ''));
+         for(let d = 0; d < 7; d++) o.push(DIAS_CORTO[d] + ':' + manosDe(d) + 'm/' + libranDe(d) + 'lib' + (hay128(d) ? '+12-8' : ''));
          return o.join(' '); })());
     ok('Y cuando sale, es de Hertz y de la Terminal A',
        (() => { for(let d = 0; d < 7; d++){
@@ -11957,6 +12072,36 @@ function pruebas(){
          return g.a.indexOf(ent.id) >= 0 || g.b.indexOf(ent.id) >= 0;
        })(),
        (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
+    /* Sacar a la sombra a mano para el 10-6: tiene que poder hacerse
+       cuantas veces se quiera, quedar como cobertura de verdad y no
+       perderse al rehacer la semana. */
+    (function(){
+      const ent = E.find(x => haceSombra(x));
+      const tR = (S.turnos || []).find(x => x.corto === TURNO_RESCATE && x.activo);
+      const pR = puestosActivos().find(x => x.terminal === 'A' && /dollar/i.test(x.nombre || ''));
+      if(!ent || !tR || !pR) return;
+      const kx = addDias(k, 6300);
+      const gSem = SEMANA; SEMANA = kx;
+      const w = semana(kx);
+      /* como lo deja 'asignarRescate' */
+      w.celdas[ck(ent.id, 0)] = { t:tR.id, p:pR.id, o:'manual', b:true, rescate:true };
+      olvidarTodo();
+      const c = celda(ent.id, 0, kx);
+      ok('A quien hace sombra se le puede poner el ' + TURNO_RESCATE + ' a mano',
+         !!(c && !c.sombra && c.p === pR.id && c.b === true),
+         c ? (turno(c.t)||{}).corto + ' en ' + ((puesto(c.p)||{}).corto || '?') : 'vacia');
+      ok('Y ahi si cuenta como cobertura, que para eso sale de sombra',
+         ocupacion(ctxReal(kx), 0, tR.id, pR.id) === 1,
+         'ocupacion del ' + TURNO_RESCATE + ': ' + ocupacion(ctxReal(kx), 0, tR.id, pR.id));
+      ok('El revisor no lo toma por un error',
+         (() => { const r = validar(ctxReal(kx), ent.id, 0, tR.id, pR.id,
+                    { reemplazar:true, rescate:true });
+                  return r.ok || r.aviso; })());
+      ok('Y "Otra alternativa" no lo pisa, porque esta puesto a mano',
+         !!(baseManual(kx)[ck(ent.id, 0)] || {}).rescate);
+      delete S.semanas[kx]; SEMANA = gSem; olvidarTodo();
+    })();
+
     ok('El sorteo es repetible: la misma semilla da siempre los mismos grupos',
        gruposDosUno().a.join(',') === gruposDosUno().a.join(','));
     ok('Sortear otra vez cambia quien va con quien',
