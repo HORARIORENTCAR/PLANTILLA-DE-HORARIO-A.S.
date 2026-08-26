@@ -7354,7 +7354,14 @@ function pantallaAjustes(){
 
   h += ajustesSupervision();
   h += ajustesServicio();
-  h += ajustesAusencias();
+  /* Las vacaciones y los permisos se manejan desde el horario, que es
+     donde se ve el efecto. Aqui solo queda el camino. */
+  h += '<div class="card"><h2>Vacaciones, licencias y permisos</h2>' +
+    '<div class="alert info" style="margin:0">Se apuntan desde el <b>horario</b>, con el boton ' +
+    '<b>Vacaciones y permisos</b> que sale en los tres paneles. Ahi mismo se ve el efecto en las ' +
+    'casillas y el aviso de las semanas que no cuadran.' +
+    (ausenciasVivas() ? ' Ahora mismo hay <b>' + ausenciasVivas() + '</b> apuntada(s).' : '') +
+    '</div></div>';
 
   /* --- nube --- */
   const n = nubeConfig();
@@ -7743,15 +7750,38 @@ function guardarServicioPuesto(){
    Se apuntan por fechas y el horario se rehace alrededor. Un dia de
    ausencia no es un dia libre: es un dia que esa persona no esta.
    ===================================================================== */
-function ajustesAusencias(){
+/* =====================================================================
+   VACACIONES, LICENCIAS Y PERMISOS
+   Viven en el horario y no en Ajustes: es ahi donde se ve el efecto -la
+   casilla se pinta de su color y el reparto se rehace alrededor-, asi que
+   tenerlas a un clic ahorra el viaje. Igual que los feriados.
+   ===================================================================== */
+let AUSENCIAS_ABIERTO = false;
+function verAusencias(){
+  AUSENCIAS_ABIERTO = true;
+  modal('Vacaciones, licencias y permisos', ausenciasHTML(),
+    '<button class="btn sec" onclick="cerrarAusencias()">Cerrar</button>', true);
+}
+function cerrarAusencias(){ AUSENCIAS_ABIERTO = false; cerrar(); render(); }
+/* Despues de anadir, corregir o quitar una hay que volver a pintar la
+   lista sin cerrar el panel: si se llamara a render() a secas habria que
+   abrirlo otra vez para meter la siguiente, que es justo lo que molesta. */
+function refrescarAusencias(){
+  if(AUSENCIAS_ABIERTO) verAusencias(); else render();
+}
+/* Cuantas hay ahora mismo o estan por venir, para el numerito del boton */
+function ausenciasVivas(){
+  const hoy = hoyISO();
+  return ausencias().filter(a => a.hasta >= hoy).length;
+}
+function ausenciasHTML(){
   const hoy = hoyISO();
   const l = ausencias().slice().sort((a,b) => a.desde < b.desde ? -1 : 1);
   const activasHoy = l.filter(a => a.desde <= hoy && hoy <= a.hasta);
   const futuras = l.filter(a => a.desde > hoy);
   const pasadas = l.filter(a => a.hasta < hoy);
 
-  let h = '<div class="card"><h2>Vacaciones, licencias y permisos</h2>' +
-    '<p class="muted" style="margin-top:-4px">Se apuntan por fechas. Esos dias la persona no entra en el reparto, ' +
+  let h = '<p class="muted" style="margin-top:0">Se apuntan por fechas. Esos dias la persona no entra en el reparto, ' +
     'y el horario se rehace solo alrededor: no son dias libres, son dias en que no esta.</p>' +
     '<div class="row" style="margin-bottom:10px;align-items:flex-end">' +
       '<label class="f" style="margin:0;min-width:180px"><span>Quien</span><select id="aus_emp">' +
@@ -7767,7 +7797,7 @@ function ajustesAusencias(){
     '</div>';
 
   if(!l.length)
-    return h + '<div class="alert info" style="margin:0">No hay ninguna ausencia registrada.</div></div>';
+    return h + '<div class="alert info" style="margin:0">No hay ninguna ausencia registrada.</div>';
 
   const tabla = (titulo, arr, tenue) => {
     if(!arr.length) return '';
@@ -7834,7 +7864,7 @@ function ajustesAusencias(){
              .join('; ') + ')'
          : '') + '.</p>';
 
-  return h + '</div>';
+  return h;
 }
 function agregarAusencia(){
   const empId = el('aus_emp').value;
@@ -7846,7 +7876,7 @@ function agregarAusencia(){
   /* las semanas ya hechas que caen dentro se rehacen para que salga bien */
   const n = rehacerSemanasDe(a.desde, a.hasta);
   bitacora(TIPOS_AUSENCIA[a.tipo] + ' de ' + empleado(empId).nombre + ' del ' + a.desde + ' al ' + a.hasta + '.');
-  guardar(); render();
+  guardar(); refrescarAusencias();
   toast('Ausencia registrada' + (n ? ' · ' + n + ' semana(s) rehecha(s)' : ''));
 }
 /* =====================================================================
@@ -7877,7 +7907,7 @@ function editarAusencia(id){
     '<p class="tiny muted" style="margin:0">Al guardar se rehacen los borradores de las semanas que toque, ' +
     'las de antes y las de ahora. Lo publicado no se toca.</p>';
   modal('Editar la ausencia', h,
-    '<button class="btn sec" onclick="cerrar()">Cancelar</button>' +
+    '<button class="btn sec" onclick="refrescarAusencias()">Cancelar</button>' +
     '<button class="btn" onclick="guardarAusencia(\'' + id + '\')">Guardar cambios</button>');
 }
 function guardarAusencia(id){
@@ -7896,7 +7926,7 @@ function guardarAusencia(id){
     tocadas += rehacerSemanasDe(a.desde, a.hasta);
   bitacora('Se corrigio la ausencia de ' + (empleado(a.empId) || {}).nombre + ': ' +
            TIPOS_AUSENCIA[a.tipo] + ' del ' + a.desde + ' al ' + a.hasta + '.');
-  cerrar(); guardar(); render();
+  cerrar(); guardar(); refrescarAusencias();
   toast('Ausencia corregida' + (tocadas ? ' &middot; ' + tocadas + ' semana(s) rehecha(s)' : ''));
 }
 function borrarAusencia(id){
@@ -7905,7 +7935,7 @@ function borrarAusencia(id){
   S.ausencias = ausencias().filter(x => x.id !== id);
   const n = rehacerSemanasDe(a.desde, a.hasta);
   bitacora('Se quito la ausencia de ' + (empleado(a.empId) || {}).nombre + ' del ' + a.desde + ' al ' + a.hasta + '.');
-  guardar(); render();
+  guardar(); refrescarAusencias();
   toast('Ausencia eliminada' + (n ? ' · ' + n + ' semana(s) rehecha(s)' : ''));
 }
 /* Rehace los borradores que toquen ese tramo de fechas, de hoy en adelante */
@@ -8018,6 +8048,15 @@ function verFeriadosDominicanos(anio){
     guardar(); cerrar(); refrescarFeriados();
     toast(nuevos.length + ' feriado(s) anadido(s)');
   };
+}
+
+/* El boton de las ausencias sale en los tres horarios: una vacacion de
+   cualquiera afecta a su equipo, y no se sabe de antemano cual estaras
+   mirando cuando te enteres. */
+function botonAusenciasHTML(){
+  const v = ausenciasVivas();
+  return '<button class="btn sec sm" onclick="verAusencias()">Vacaciones y permisos' +
+    (v ? ' <span class="pill off">' + v + '</span>' : '') + '</button>';
 }
 
 /* =====================================================================
@@ -8985,7 +9024,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-26-a';
+const SELLO_VERSION = '2026-08-26-b';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -9076,6 +9115,7 @@ function tablaEquipo(eq, mapaConf, vacia){
           (vacioEq ? 'Llenar este horario' : 'Completar lo que falta') + '</button>' +
           '<button class="btn sec sm" onclick="accionOtra()">Otra alternativa</button>' +
           '<button class="btn sec sm" onclick="menuLimpiar()">Limpiar o vaciar</button>' +
+          botonAusenciasHTML() +
           /* Quien libra 2 dias. Solo tiene sentido con el reparto normal:
              con el de dos grupos encendido no hay "uno por semana" que
              cambiar, libra media plantilla. Se deja a la vista pero apagado
@@ -9108,6 +9148,7 @@ function tablaEquipo(eq, mapaConf, vacia){
               (feriados().length ? ' <span class="pill off">' + feriados().length + '</span>' : '') +
               '</button>'
             : '') +
+          botonAusenciasHTML() +
           navSemanaHTML();
   }
   let h = '<section class="equipo ' + info.clase + '">' +
