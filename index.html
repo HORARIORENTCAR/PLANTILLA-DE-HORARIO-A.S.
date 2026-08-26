@@ -1155,7 +1155,7 @@ function datosDemo(){
 
   const k = lunesDe(hoyISO());
   return {
-    version: 28,
+    version: 29,
     empresa: 'ANDEL STAR',
     pin: '1234',
     config: {
@@ -1175,6 +1175,10 @@ function datosDemo(){
       /* El otro reparto de descansos, apagado de fabrica. Ver el bloque
          "DOS SEMANAS, DOS DESCANSOS" mas abajo. */
       modoDosUno: false,
+      /* Nadie lleva dos dias seguidos por rotacion: todos libran UNO fijo
+         cada semana y los segundos dias los pone el usuario a mano, a
+         quien quiera y por el tiempo que quiera. */
+      dosLibresManual: true,
       modoDosUnoDesfase: 0,
       modoDosUnoSemilla: 7,      // de que sorteo salen los dos grupos
       prioridad: prioridadInicial(puestos, turnos),
@@ -1356,6 +1360,10 @@ function sanear(){
     if(!w.estado) w.estado = 'borrador';
     delete w.tipo;                                        // ya no hay semanas de 5 y de 6 dias
     if(w.turno2 && !S.empleados.some(e => e.id === w.turno2)) w.turno2 = null;
+    /* Los 2 dias libres que pusiste a mano en esa semana. Se limpia de
+       gente que ya no exista y de repetidos. */
+    if(!Array.isArray(w.dos2)) delete w.dos2;
+    else w.dos2 = w.dos2.filter((id, i) => S.empleados.some(e => e.id === id) && w.dos2.indexOf(id) === i);
     for(const key in w.celdas){
       const c = w.celdas[key];
       if(!c || typeof c !== 'object' || !c.t){ delete w.celdas[key]; continue; }
@@ -2132,18 +2140,34 @@ function migrar(){
        Se hace despues de cargar, no aqui: rehacer una semana usa medio
        programa y aqui todavia no esta todo en pie. */
     olvidarTodo();
-    setTimeout(function(){
-      try {
-        const cuantas = rehacerBorradoresProximos();
-        if(cuantas){ guardar(); render();
-          toast(cuantas > 1 ? cuantas + ' semanas rehechas: vuelve la rotacion de los 2 dias'
-                            : 'Semana rehecha: vuelve la rotacion de los 2 dias'); }
-      } catch(e){}
-    }, 500);
+    pedirRehacerBorradores();
     bitacora('Los dias que quien hace sombra sale a cubrir el ' + TURNO_RESCATE + ' ya cuentan como trabajo. ' +
              'Sin eso, con cinco personas en el mostrador el segundo dia libre seguido no cabia y la rotacion parecia parada.');
   }
-  S.version = 28;
+  /* --- v29: los 2 dias libres pasan a ser cosa tuya --- */
+  if(!(S.version >= 29)){
+    /* El usuario lo pidio el 26 de agosto de 2026: nadie lleva dos dias
+       seguidos por rotacion. Todos libran UNO fijo cada semana -los del
+       mostrador, quien hace sombra y quien estuviera fuera de la
+       rotacion- y los segundos dias los reparte el, a quien quiera y por
+       las semanas que quiera. La maquinaria de los dos dias seguidos
+       sigue entera; lo que cambia es quien decide. */
+    S.config.dosLibresManual = true;
+    S.config.modoDosUno = false;
+    /* Lo que ya hubieras elegido a mano para una semana suelta se
+       conserva: era exactamente esto, pero para una sola persona. */
+    let heredadas = 0;
+    Object.keys(S.semanas).forEach(kk => {
+      const w = S.semanas[kk];
+      if(w && w.turno2 && !Array.isArray(w.dos2)){ w.dos2 = [w.turno2]; heredadas++; }
+    });
+    olvidarTodo();
+    pedirRehacerBorradores();
+    bitacora('Los 2 dias libres seguidos ya no van por rotacion: todos libran un dia fijo y el segundo lo asignas tu, ' +
+             'a quien quieras y por las semanas que quieras.' +
+             (heredadas ? ' Se conservaron ' + heredadas + ' semana(s) que ya tenias elegidas a mano.' : ''));
+  }
+  S.version = 29;
 }
 
 function cargar(){
@@ -2422,6 +2446,32 @@ function turnoDosLibres(k){
   }
   return orden[base];
 }
+/* =====================================================================
+   LOS 2 DIAS LIBRES, A MANO
+   Desde el 26 de agosto de 2026 el segundo dia libre NO lo reparte nadie
+   automaticamente. Todos -los del mostrador, quien hace sombra y quien
+   no esta en la rotacion- libran UN dia fijo cada semana, y los segundos
+   dias los pone el usuario: a quien quiera, a cuantos quiera y por las
+   semanas que quiera.
+   La maquinaria de los dos dias seguidos sigue entera -salen pegados, se
+   recolocan los demas, no se vacia ningun puesto principal-; lo unico que
+   cambio es quien decide.
+   ===================================================================== */
+function dosLibresManual(){ return !!(S.config && S.config.dosLibresManual); }
+/* A quien le pusiste 2 dias esa semana */
+function dosLibresDe(k){
+  const w = S.semanas[k || SEMANA];
+  if(!w || !Array.isArray(w.dos2)) return [];
+  return w.dos2.filter(id => empleado(id));
+}
+function tieneDosLibres(empId, k){ return dosLibresDe(k).indexOf(empId) >= 0; }
+/* Todos los del mostrador que se pueden elegir. Incluye a quien hace
+   sombra y a quien esta fuera de la rotacion: el usuario decide, no la
+   regla. Los que ahora mismo no estan en plantilla van aparte. */
+function elegiblesDosLibres(){
+  return { dentro: activos(),
+           fuera: S.empleados.filter(e => !e.activo && equipoDe(e) === 'rotativo') };
+}
 /* Posicion de una persona en la vuelta actual, para explicarlo en pantalla */
 function proximaVezDosLibres(empId, k){
   const { orden } = rotacionLibres();
@@ -2518,6 +2568,8 @@ function libresPorPersona(k){
   k = k || SEMANA;
   const emps = activos();
   const turno2 = turnoDosLibres(k);
+  const aMano = dosLibresManual();
+  const dos = dosLibresDe(k);
   /* Con la plantilla muy corta se acaba el turno de dos dias seguidos: cada
      uno libra uno y punto. Con cuatro personas no hay margen para regalos.
      Se cuentan solo los que pueden CUBRIR: la sombra esta, pero no tapa
@@ -2529,14 +2581,24 @@ function libresPorPersona(k){
   const firma = emps.map(e => e.id + ':' + diasAusente(e.id, k).length +
                               (e.dosLibresFijos ? 'F' : '')).join(',') + '|' + (turno2 || '-') +
                 (corta ? '|c' : '') +
+                (aMano ? '|m' + dos.join('+') : '') +
                 (dosUno ? '|d' + emps.map(e => leTocanDosLibres(e.id, k) ? 2 : 1).join('') : '');
   if(_libresCache.k === k && _libresCache.firma === firma) return _libresCache.val;
 
   const info = emps.map(e => {
     const fuera = diasAusente(e.id, k).length;
     /* En el reparto de dos-y-uno, un grupo lleva dos y el otro uno */
-    const suyos = corta ? 1
-                : dosUno ? (leTocanDosLibres(e.id, k) ? 2 : 1)
+    /* El orden de mando, de fuera hacia dentro:
+       1. El reparto de dos grupos, si lo encendiste: es un interruptor y
+          mientras este puesto reparte el los descansos.
+       2. Lo que pusiste a mano, que gana incluso a la plantilla corta: si
+          lo pediste se intenta, y si de verdad no cabe se recorta mas
+          abajo -y se avisa-, pero la decision es tuya primero.
+       3. La plantilla corta.
+       4. La vieja rotacion, que ya solo se usa si apagas los 2 dias a mano. */
+    const suyos = dosUno ? (leTocanDosLibres(e.id, k) ? 2 : 1)
+                : aMano ? (dos.indexOf(e.id) >= 0 ? 2 : 1)
+                : corta ? 1
                 : (e.dosLibresFijos ? 2 : (turno2 === e.id ? 2 : 1));
     /* A quien tiene dia libre fijo en su ficha no se le puede recortar por
        debajo de ese dia: va a librarlo igual, y si aqui pusiera cero la
@@ -2589,13 +2651,15 @@ function libresPorPersona(k){
        A quien esta la semana entera no se le toca: antes que dejar a
        alguien siete dias seguidos sin descansar, es mejor decir la verdad
        y avisar de que faltan manos. */
-    let cand = info.filter(x => !x.sombra && x.libres > x.piso && x.libres > 0 && x.fuera >= 1)
+    /* A quien hace sombra solo se le toca el SEGUNDO dia. El primero no:
+       ni gasta hueco de descanso ni tapa ningun mostrador. */
+    let cand = info.filter(x => (!x.sombra || x.libres >= 2) && x.libres > x.piso && x.libres > 0 && x.fuera >= 1)
                    .sort((a,b) => (b.fuera - a.fuera) || (a.disp - b.disp));
     if(!cand.length){
       /* Nadie sobra por ausencia. Entonces se le aplaza el segundo dia
          libre a quien tenia turno de dos: pierde el gusto, no el descanso.
          De un dia libre por persona no se baja nunca. */
-      cand = info.filter(x => !x.sombra && x.libres >= 2 && x.libres > x.piso);
+      cand = info.filter(x => x.libres >= 2 && x.libres > x.piso);
     }
     if(!cand.length) break;      // no queda de donde recortar sin pasarse
     cand[0].libres--;
@@ -2612,6 +2676,7 @@ function libresSemana(empId, k){
   const e = empleado(empId);
   const fuera = diasAusente(empId, k).length;
   const suyos = modoDosUno() ? (leTocanDosLibres(empId, k) ? 2 : 1)
+              : dosLibresManual() ? (tieneDosLibres(empId, k) ? 2 : 1)
               : ((e && e.dosLibresFijos) ? 2 : (turnoDosLibres(k) === empId ? 2 : 1));
   return Math.max(0, Math.min(suyos, 7 - fuera));
 }
@@ -2828,6 +2893,23 @@ function ponerEntrenamiento(empId, activo){
   t.activo = !!activo;
   olvidarRefuerzos();
   olvidarObjetivoTipo();
+}
+/* Varias migraciones pueden pedir lo mismo al abrir. Se hace UNA sola vez
+   y despues de cargar, que rehacer una semana usa medio programa y
+   durante la carga todavia no esta todo en pie. */
+let _rehacerPedido = false;
+function pedirRehacerBorradores(){
+  if(_rehacerPedido) return;
+  _rehacerPedido = true;
+  setTimeout(function(){
+    _rehacerPedido = false;
+    try {
+      const c = rehacerBorradoresProximos();
+      if(c){ guardar(); render();
+        toast(c > 1 ? c + ' semanas rehechas con las reglas nuevas'
+                    : 'Semana rehecha con las reglas nuevas'); }
+    } catch(e){}
+  }, 600);
 }
 /* Rehace los borradores de esta semana en adelante. Al cambiar quien puede
    hacer que, los repartos ya hechos se quedan viejos; las semanas
@@ -3129,7 +3211,8 @@ function techoLibres(k){
   const emps = activos();
   const turno2 = turnoDosLibres(k);
   const firma = emps.map(e => e.id + ':' + diasAusente(e.id, k).length +
-                              (e.dosLibresFijos ? 'F' : '')).join(',') + '|' + (turno2 || '-');
+                              (e.dosLibresFijos ? 'F' : '')).join(',') + '|' + (turno2 || '-') +
+                '|' + dosLibresDe(k).join('+');
   if(_techoCache.k === k && _techoCache.firma === firma) return _techoCache.val;
   const t = [];
   for(let d = 0; d < 7; d++) t.push(cupoLibresIdeal(d, k));
@@ -7121,6 +7204,14 @@ function ajustesRotacion(){
     return h + '</div>';
   }
 
+  /* Con los 2 dias a mano esta lista ya no reparte nada. Se deja la
+     explicacion y el camino al boton, que es donde se decide ahora. */
+  if(dosLibresManual())
+    return h + '<div class="alert info" style="margin:0">Los <b>2 dias libres seguidos ya no van por rotacion</b>. ' +
+      'Todos libran <b>un dia fijo</b> cada semana, y el segundo se lo das tu a quien quieras: en el horario de ' +
+      '<b>Agentes de Renta</b>, boton <b>Quien libra 2 dias</b>. Ahi marcas a las personas que quieras ' +
+      '-una, dos, cuatro- y dices por cuantas semanas.</div></div>';
+
   h += '<p class="muted" style="margin-top:-4px">Cada semana le toca a una sola persona librar dos dias seguidos; ' +
     'las demas libran uno. Al acabar la semana el turno pasa al siguiente de la lista, y nadie repite ' +
     'hasta que todos hayan pasado.</p>';
@@ -8788,8 +8879,10 @@ function pantallaHorario(){
     '<div class="rango">Horario del ' + fechaLarga(SEMANA) + ' al ' + fechaLarga(addDias(SEMANA,6)) + '</div>' +
     '<div class="meta">' +
       '<span class="pill info">2 dias libres: ' +
-        esc((empleado(turnoDosLibres(SEMANA))||{}).nombre || 'sin rotacion') +
-        (S.semanas[SEMANA] && S.semanas[SEMANA].turno2 ? ' (a mano)' : '') + '</span>' +
+        (dosLibresManual()
+          ? esc(resumenDosLibres(SEMANA))
+          : esc((empleado(turnoDosLibres(SEMANA))||{}).nombre || 'sin rotacion') +
+            (S.semanas[SEMANA] && S.semanas[SEMANA].turno2 ? ' (a mano)' : '')) + '</span>' +
       (w.estado === 'publicado'
         ? '<span class="pill ok">Publicado' + (w.publicado ? ' el ' + w.publicado.slice(0,10).split('-').reverse().join('/') : '') + '</span>'
         : '<span class="pill warn">Borrador</span>') +
@@ -8892,7 +8985,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-25-i';
+const SELLO_VERSION = '2026-08-26-a';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -8987,7 +9080,11 @@ function tablaEquipo(eq, mapaConf, vacia){
              con el de dos grupos encendido no hay "uno por semana" que
              cambiar, libra media plantilla. Se deja a la vista pero apagado
              y diciendo por que, que es mas util que hacerlo desaparecer. */
-          (modoDosUno()
+          (dosLibresManual() && !modoDosUno()
+            ? '<button class="btn sec sm" onclick="menuDosLibres()">Quien libra 2 dias' +
+              (dosLibresDe(SEMANA).length ? ' <span class="pill ok">' + dosLibresDe(SEMANA).length + '</span>' : '') +
+              '</button>'
+            : modoDosUno()
             ? '<button class="btn sec sm" disabled title="Con el reparto de dos grupos libra media plantilla cada semana, no una sola persona">Quien libra 2 dias</button>'
             : '<button class="btn sec sm" onclick="cambiarTurnoSemana()">Quien libra 2 dias' +
               (S.semanas[SEMANA] && S.semanas[SEMANA].turno2 ? ' <span class="pill ok">a mano</span>' : '') +
@@ -9137,6 +9234,102 @@ function tablaEquipo(eq, mapaConf, vacia){
     h += '<td style="background:#fafbfc"></td></tr>';
   }
   return h + '</tbody></table></div></section>';
+}
+
+/* =====================================================================
+   EL PANEL DE LOS 2 DIAS LIBRES
+   Marcas a quien quieras -uno, dos, cuatro, los que sean-, dices por
+   cuantas semanas, y listo. Lo que no marcas libra su dia y ya.
+   Es una LISTA por semana, no un turno: por eso se puede repetir a la
+   misma persona semana tras semana sin que nada se descoloque.
+   ===================================================================== */
+function menuDosLibres(){
+  const ya = dosLibresDe(SEMANA);
+  const g = elegiblesDosLibres();
+  const fila = (e, aparte) =>
+    '<label class="opt" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;text-align:left">' +
+      '<input type="checkbox" id="dl_' + e.id + '" style="margin-top:3px;flex:0 0 auto"' +
+        (ya.indexOf(e.id) >= 0 ? ' checked' : '') + '>' +
+      '<span><b>' + esc(e.nombre) + '</b>' +
+        (haceSombra(e) ? ' <span class="pill">hace sombra</span>' : '') +
+        (e.libreFijo >= 0 ? '<small>libra fijo los ' + DIAS[e.libreFijo].toLowerCase() + 's: sus 2 dias incluiran ese</small>' : '') +
+        (aparte ? '<small>ahora mismo no esta en la plantilla; si vuelve, ya lo tendra puesto</small>' : '') +
+      '</span></label>';
+
+  let h = '<p class="muted" style="margin-top:0">Semana del ' + fechaLarga(SEMANA) + ' al ' + fechaLarga(addDias(SEMANA,6)) + '.</p>' +
+    '<div class="alert info">Todos libran <b>un dia fijo</b> cada semana. Aqui eliges <b>a quien le das el segundo</b>, ' +
+    'y los dos le saldran <b>seguidos</b>. Puedes marcar a los que quieras.</div>' +
+    '<h3>Quien libra 2 dias</h3>';
+  g.dentro.forEach(e => h += fila(e, false));
+  if(g.fuera.length){
+    h += '<h3 style="margin-top:12px">Fuera de la plantilla ahora mismo</h3>';
+    g.fuera.forEach(e => h += fila(e, true));
+  }
+  h += '<h3 style="margin-top:14px">Durante cuanto</h3>' +
+    '<select id="dl_semanas" style="width:100%">' +
+      '<option value="1">Solo esta semana</option>' +
+      '<option value="2">Esta y la siguiente (2 semanas)</option>' +
+      '<option value="3">3 semanas</option>' +
+      '<option value="4">4 semanas (un mes)</option>' +
+      '<option value="6">6 semanas</option>' +
+      '<option value="8">8 semanas (dos meses)</option>' +
+      '<option value="12">12 semanas (tres meses)</option>' +
+    '</select>' +
+    '<p class="tiny muted">Se aplica desde esta semana hacia adelante. Las semanas <b>ya publicadas</b> no se tocan. ' +
+    'Al aceptar se rehace el horario de las que ya estuvieran armadas: los dias libres de los demas se recolocan solos.</p>';
+
+  modal('Quien libra 2 dias', h,
+    '<button class="btn sec" onclick="cerrar()">Cancelar</button>' +
+    '<button class="btn sec" onclick="marcarTodosDosLibres(false)">Quitar todos</button>' +
+    '<button class="btn" onclick="aplicarDosLibres()">Aplicar</button>');
+}
+function marcarTodosDosLibres(v){
+  const g = elegiblesDosLibres();
+  g.dentro.concat(g.fuera).forEach(e => { const c = el('dl_' + e.id); if(c) c.checked = !!v; });
+}
+function aplicarDosLibres(){
+  const g = elegiblesDosLibres();
+  const lista = g.dentro.concat(g.fuera);
+  const ids = lista.filter(e => { const c = el('dl_' + e.id); return c && c.checked; }).map(e => e.id);
+  const cuantas = Math.max(1, Math.min(52, parseInt((el('dl_semanas') || {}).value, 10) || 1));
+  const publicadas = [], tocadas = [];
+  for(let i = 0; i < cuantas; i++){
+    const kk = addDias(SEMANA, 7*i);
+    const w = semana(kk);
+    if(w.estado === 'publicado'){ publicadas.push(kk); continue; }
+    if(ids.length) w.dos2 = ids.slice(); else delete w.dos2;
+    olvidarSemana(kk);
+    tocadas.push(kk);
+  }
+  const nombres = ids.map(id => (empleado(id) || {}).nombre).join(', ');
+  bitacora(ids.length
+    ? 'Libran 2 dias ' + nombres + ', desde la semana del ' + fechaLarga(SEMANA) +
+      (cuantas > 1 ? ' y durante ' + cuantas + ' semanas.' : '.')
+    : 'Nadie libra 2 dias desde la semana del ' + fechaLarga(SEMANA) +
+      (cuantas > 1 ? ' y durante ' + cuantas + ' semanas.' : '.'));
+  cerrar();
+  /* Rehacer las que ya estuvieran armadas: cambiar la lista y dejar las
+     casillas como estaban se veria como que el boton no hizo nada. */
+  const rehacer = tocadas.filter(kk => Object.keys((S.semanas[kk] || {}).celdas || {}).length);
+  const remate = () => {
+    guardar(); render();
+    toast((ids.length ? 'Libran 2 dias: ' + nombres : 'Nadie libra 2 dias') +
+          (publicadas.length ? ' &middot; ' + publicadas.length + ' semana(s) publicada(s) sin tocar' : ''));
+  };
+  if(!rehacer.length) return remate();
+  toast('Rehaciendo ' + rehacer.length + (rehacer.length > 1 ? ' semanas...' : ' semana...'));
+  let i = 0;
+  (function paso(){
+    if(i >= rehacer.length) return remate();
+    try { otraAlternativa(rehacer[i]); } catch(e){}
+    i++; setTimeout(paso, 0);
+  })();
+}
+/* Como se lee arriba del horario: los nombres, o que no hay ninguno */
+function resumenDosLibres(k){
+  const ids = dosLibresDe(k || SEMANA);
+  if(!ids.length) return 'nadie';
+  return ids.map(id => (empleado(id) || {}).nombre || '?').join(', ');
 }
 
 /* =====================================================================
@@ -10603,16 +10796,79 @@ function pruebas(){
 
   /* --- el turno de los dos dias libres seguidos --- */
   const ROT = rotacionLibres();
-  ok('Cada semana el turno de 2 dias libres es de UNA sola persona',
-     E.filter(e => libresSemana(e.id, k) === 2 && !e.dosLibresFijos).length === (ROT.orden.length ? 1 : 0),
-     'esta semana: ' + (empleado(turnoDosLibres(k)) || {}).nombre +
-     (E.some(e => e.dosLibresFijos) ? '  (ademas ' + E.filter(e => e.dosLibresFijos).map(e => e.nombre).join(', ') + ' los tiene siempre)' : ''));
+  /* Con los 2 dias a mano no hay turno: libra dos QUIEN TU DIGAS, y si no
+     has dicho nada no libra dos nadie. Todos, sombra incluida, llevan su
+     dia fijo. */
+  if(dosLibresManual()){
+    const puestos = dosLibresDe(k);
+    ok('Libran 2 dias exactamente los que pusiste a mano, ni uno mas',
+       E.every(e => libresSemana(e.id, k) === (puestos.indexOf(e.id) >= 0 ? 2 : 1)),
+       (puestos.length ? 'a mano: ' + puestos.map(id => (empleado(id)||{}).nombre).join(', ') : 'no hay ninguno puesto a mano') +
+       '  //  ' + E.map(e => e.nombre + ':' + libresSemana(e.id, k)).join(' '));
+  } else {
+    ok('Cada semana el turno de 2 dias libres es de UNA sola persona',
+       E.filter(e => libresSemana(e.id, k) === 2 && !e.dosLibresFijos).length === (ROT.orden.length ? 1 : 0),
+       'esta semana: ' + (empleado(turnoDosLibres(k)) || {}).nombre +
+       (E.some(e => e.dosLibresFijos) ? '  (ademas ' + E.filter(e => e.dosLibresFijos).map(e => e.nombre).join(', ') + ' los tiene siempre)' : ''));
+  }
+
+  /* =================================================================
+     LOS 2 DIAS LIBRES A MANO
+     El corazon del cambio del 26 de agosto de 2026: eliges a quien
+     quieras -uno, tres, la sombra- y por las semanas que quieras.
+     ================================================================= */
+  (function(){
+    if(!dosLibresManual() || E.length < 4) return;
+    const kx = addDias(k, 9100);
+    const guardaSem = SEMANA;
+    const limpiar = () => { olvidarLibres(); olvidarRefuerzos(); olvidarObjetivoTipo(); };
+    SEMANA = kx; semana(kx); limpiar();
+
+    ok('Sin tocar nada, TODOS libran un solo dia (tambien quien hace sombra)',
+       activos().every(x => libresSemana(x.id, kx) === 1),
+       activos().map(x => x.nombre + ':' + libresSemana(x.id, kx)).join(' '));
+
+    const tres = activos().slice(0, 3).map(x => x.id);
+    semana(kx).dos2 = tres.slice(); olvidarSemana(kx); limpiar();
+    ok('Se le pueden dar 2 dias a varias personas a la vez',
+       tres.every(id => libresSemana(id, kx) === 2) &&
+       activos().filter(x => tres.indexOf(x.id) < 0).every(x => libresSemana(x.id, kx) === 1),
+       activos().map(x => x.nombre + ':' + libresSemana(x.id, kx)).join(' '));
+
+    const som = activos().find(x => haceSombra(x));
+    if(som){
+      semana(kx).dos2 = [som.id]; olvidarSemana(kx); limpiar();
+      ok('Y tambien a quien hace sombra, que antes quedaba fuera',
+         libresSemana(som.id, kx) === 2,
+         som.nombre + ':' + libresSemana(som.id, kx));
+    }
+
+    /* Repetir a la misma persona semana tras semana tiene que poder
+       hacerse: es una lista por semana, no un turno que avanza. */
+    const uno = activos()[0];
+    let siempre = true, det = [];
+    for(let i = 0; i < 4; i++){
+      const kk = addDias(kx, 7*i);
+      semana(kk).dos2 = [uno.id]; olvidarSemana(kk); limpiar();
+      det.push(libresSemana(uno.id, kk));
+      if(libresSemana(uno.id, kk) !== 2) siempre = false;
+    }
+    ok('A la misma persona se le pueden dar 2 dias muchas semanas seguidas',
+       siempre, uno.nombre + ' -> ' + det.join(','));
+    for(let i = 0; i < 4; i++) delete S.semanas[addDias(kx, 7*i)];
+
+    SEMANA = guardaSem; limpiar();
+  })();
   /* =================================================================
      ELEGIR A MANO QUIEN LIBRA LOS DOS DIAS
      El boton del panel de agentes de renta. Cambia SOLO esa semana: la
      rotacion no se mueve, asi que a quien le tocaba no pierde su vuelta.
      ================================================================= */
   (function(){
+    /* Solo con la vieja rotacion encendida. Con los 2 dias a mano no hay
+       'turno de la semana' que mover: la lista la pones tu, y eso se
+       comprueba mas arriba. */
+    if(dosLibresManual()) return;
     if(ROT.orden.length < 2) return;
     const kx = addDias(k, 8400);
     const guardaSem = SEMANA;
@@ -10981,7 +11237,9 @@ function pruebas(){
   ok('La nueva alternativa tampoco deja puestos sin cubrir', ev2.eq.faltan === 0, ev2.eq.faltan + ' sin cubrir');
 
   /* --- el descanso alrededor de los dos dias libres --- */
-  const dos = turnoDosLibres(k);
+  /* Quien libra dos esta semana: con los 2 dias a mano es el primero de tu
+     lista, y si no pusiste a nadie no hay nada que comprobar aqui. */
+  const dos = dosLibresManual() ? dosLibresDe(k)[0] : turnoDosLibres(k);
   if(dos){
     const libres2 = [];
     for(let d = 0; d < 7; d++){ const c = celda(dos, d, k); if(c && c.t === LIBRE) libres2.push(d); }
@@ -12115,10 +12373,10 @@ function pruebas(){
          return g.a.indexOf(ent.id) >= 0 || g.b.indexOf(ent.id) >= 0;
        })(),
        (E.find(x => entrenando(x)) || {}).nombre || 'nadie en entrenamiento');
-    /* La rotacion de los 2 dias no se puede parar por la plantilla justa.
+    /* Los 2 dias que pones a mano no se pueden caer por la plantilla justa.
        Con cinco en el mostrador y una sombra, la cuenta salia corta -no
-       sumaba los dias que la sombra tapa el 10-6- y el segundo dia se le
-       recortaba a quien le tocaba, semana tras semana. */
+       sumaba los dias que la sombra tapa el 10-6- y el segundo dia se
+       recortaba solo, semana tras semana, sin decir nada. */
     (function(){
       const cubren = E.filter(x => !haceSombra(x));
       if(cubren.length < 5 || !E.some(x => haceSombra(x))) return;
@@ -12127,24 +12385,30 @@ function pruebas(){
       /* Con el interruptor de los dos grupos encendido manda el grupo y no
          el turno, y lo que se mira aqui es justo el turno. */
       const guardaDosUno = S.config.modoDosUno; S.config.modoDosUno = false;
+      const guardaMano = S.config.dosLibresManual; S.config.dosLibresManual = true;
       olvidarTodo();
       const nombres = [], faltas = [];
       /* Semanas de mas adelante, sin armar y sin nadie de vacaciones: lo que
-         se mira aqui es el reparto en si, no como lo ajusta una ausencia. */
+         se mira aqui es el reparto en si, no como lo ajusta una ausencia.
+         Se le pide a UNO distinto cada semana, que es el uso normal. */
       const creadas = [];
+      const rueda = cubren.slice(0, 5);
       for(let n = 0; n < 6; n++){
         const kx = addDias(k, 6300 + 7*n);
         creadas.push(kx);
-        const toca = turnoDosLibres(kx);
+        const quien = rueda[n % rueda.length];
+        semana(kx).dos2 = [quien.id];
+        olvidarTodo();
         const lib = libresPorPersona(kx);
-        nombres.push((empleado(toca)||{}).nombre + ':' + lib[toca]);
-        if(!toca || lib[toca] !== 2) faltas.push((empleado(toca)||{}).nombre || '?');
+        nombres.push(quien.nombre + ':' + lib[quien.id]);
+        if(lib[quien.id] !== 2) faltas.push(quien.nombre);
       }
-      ok('Con cinco en el mostrador la rotacion de los 2 dias sigue semana a semana',
+      ok('Con cinco en el mostrador los 2 dias que pones a mano no se caen',
          faltas.length === 0, nombres.join(' '));
       creadas.forEach(kx => delete S.semanas[kx]);
       apagados.forEach(x => x.activo = true);
       S.config.modoDosUno = guardaDosUno;
+      S.config.dosLibresManual = guardaMano;
       olvidarTodo();
     })();
 
