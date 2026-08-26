@@ -1179,6 +1179,7 @@ function datosDemo(){
          cada semana y los segundos dias los pone el usuario a mano, a
          quien quiera y por el tiempo que quiera. */
       dosLibresManual: true,
+      avisosHorario: true,        // los avisos de encima del horario
       modoDosUnoDesfase: 0,
       modoDosUnoSemilla: 7,      // de que sorteo salen los dos grupos
       prioridad: prioridadInicial(puestos, turnos),
@@ -1240,6 +1241,11 @@ function sanear(){
   if(!S.pin) S.pin = '1234';
   if(!S.config || typeof S.config !== 'object') S.config = {};
   if(!(S.config.maxLibresDia >= 1)) S.config.maxLibresDia = 2;
+  /* Los avisos que se despliegan encima del horario. Encendidos de
+     fabrica; el usuario los apaga cuando ya sabe lo que dicen y le
+     estorban, y los vuelve a encender cuando quiere. */
+  if(S.config.avisosHorario === undefined) S.config.avisosHorario = true;
+  S.config.avisosHorario = !!S.config.avisosHorario;
   /* El interruptor del reparto de dos-y-uno */
   S.config.modoDosUno = !!S.config.modoDosUno;
   S.config.modoDosUnoDesfase = S.config.modoDosUnoDesfase ? 1 : 0;
@@ -1295,6 +1301,9 @@ function sanear(){
     if(e.obs == null) e.obs = '';
     if(!(e.libreFijo >= 0 && e.libreFijo <= 6)) e.libreFijo = -1;
     e.dosLibresFijos = !!e.dosLibresFijos;   // libra 2 seguidos todas las semanas
+    /* Con dia libre fijo, de que lado se pega el segundo dia cuando le das
+       dos. 'despues' de fabrica: el domingo fijo se junta con el lunes. */
+    if(e.dosLibresLado !== 'antes') e.dosLibresLado = 'despues';
     /* quien ya los tiene siempre no necesita turno en la rotacion */
     if(e.dosLibresFijos && S.config.rotacionLibres && Array.isArray(S.config.rotacionLibres.orden)){
       const iR = S.config.rotacionLibres.orden.indexOf(e.id);
@@ -2465,6 +2474,24 @@ function dosLibresDe(k){
   return w.dos2.filter(id => empleado(id));
 }
 function tieneDosLibres(empId, k){ return dosLibresDe(k).indexOf(empId) >= 0; }
+/* =====================================================================
+   DE QUE LADO SE PEGA EL SEGUNDO DIA
+   Quien tiene dia libre fijo solo puede llevar el bloque de dos a un lado
+   o al otro de ese dia: con el domingo fijo, o sabado+domingo o
+   domingo+lunes. De fabrica DESPUES -domingo y lunes-, que es lo que se
+   pidio: asi el descanso se estira hacia la semana nueva en vez de
+   cerrar la vieja.
+   Se elige en el panel de 'Quien libra 2 dias' y se guarda en la ficha,
+   asi que vale para todas las semanas hasta que lo cambies.
+   ===================================================================== */
+function ladoDosLibres(e){
+  if(typeof e === 'string') e = empleado(e);
+  return (e && e.dosLibresLado === 'antes') ? 'antes' : 'despues';
+}
+/* El dia que acompana al fijo segun ese lado */
+function companeroDelFijo(e, fj){
+  return ladoDosLibres(e) === 'antes' ? (fj + 6) % 7 : (fj + 1) % 7;
+}
 /* Todos los del mostrador que se pueden elegir. Incluye a quien hace
    sombra y a quien esta fuera de la rotacion: el usuario decide, no la
    regla. Los que ahora mismo no estan en plantilla van aparte. */
@@ -4031,6 +4058,27 @@ function asigEnFecha(ctx, empId, fecha){
   return w ? (w.celdas[ck(empId, d)] || null) : null;
 }
 
+/* =====================================================================
+   ¿LIBRA ESE DIA?  -aunque caiga en la semana de al lado-
+   El domingo tiene que mirar el lunes de la semana SIGUIENTE, que casi
+   nunca esta armada todavia: se arma una semana y luego la otra. Sin
+   esto, el domingo no sabia que al dia siguiente se libraba y le podia
+   caer un 3-11 justo la vispera. Era el unico caso que se escapaba de la
+   regla -6 de 53 en diez semanas medidas, todos domingo-.
+   Cuando la semana de al lado no existe se usa el reparto PREVISTO, que
+   es el mismo que ya se usa para no morderse la cola en otros sitios.
+   ===================================================================== */
+function libraEnFecha(ctx, empId, fecha){
+  const a = asigEnFecha(ctx, empId, fecha);
+  if(a) return a.t === LIBRE;
+  const wk = lunesDe(fecha);
+  if(wk === ctx.k) return false;                 // la de ahora, y ese dia aun no tiene nada
+  const w = S.semanas[wk];
+  if(w && Object.keys(w.celdas || {}).length) return false;   // armada, y ese dia no libra
+  const d = Math.round((s2d(fecha) - s2d(wk)) / 86400000);
+  try { return (librePrevistoDe(empId, wk) || []).indexOf(d) >= 0; } catch(e){ return false; }
+}
+
 function finAbs(t){ let f = min2(finRealDe(t)); if(f <= min2(t.inicio)) f += 1440; return f; }
 function descansoEntre(tAnterior, tSiguiente){
   return ((1440 + min2(tSiguiente.inicio)) - finAbs(tAnterior)) / 60;
@@ -4590,9 +4638,11 @@ function puntuarCandidato(ctx, emp, d, t, puestoId, pesos){
      fecha y no por la posicion en la tabla. Justo ese es el caso de quien
      libra fijo los domingos: su lunes es siempre un dia de regreso. */
   const fecha = fechaDe(ctx.k, d);
-  const esLibre = (a) => !!(a && a.t === LIBRE);
-  const manana = asigEnFecha(ctx, emp.id, addDias(fecha, 1));
-  const ayer   = asigEnFecha(ctx, emp.id, addDias(fecha, -1));
+  /* 'libraEnFecha' y no 'asigEnFecha' a secas: cuando la semana de al lado
+     todavia no esta armada hay que preguntarle al reparto previsto, o el
+     domingo nunca se entera de que el lunes se libra. */
+  const libraManana = libraEnFecha(ctx, emp.id, addDias(fecha, 1));
+  const libraAyer   = libraEnFecha(ctx, emp.id, addDias(fecha, -1));
   const entra = min2(t.inicio);
   const sale  = min2(finRealDe(t));
   /* pesa el doble en la semana de los dos dias seguidos: ahi es donde de
@@ -4603,8 +4653,8 @@ function puntuarCandidato(ctx, emp, d, t, puestoId, pesos){
      una hora le quitaba turnos de la Terminal B a quien libra siempre el
      mismo dia. Lo que importa es salir pronto o tarde, no el minuto. */
   const escalon = (v, bueno, medio) => v <= bueno ? 1 : (v <= medio ? 0.5 : 0);
-  if(esLibre(manana)) pts += escalon(sale, 16*60, 18*60)          * 240 * suyos * P.equilibrio;  // manana libra: salir pronto
-  if(esLibre(ayer))   pts += escalon(-entra, -15*60, -12*60)      * 240 * suyos * P.equilibrio;  // ayer libro: entrar tarde
+  if(libraManana) pts += escalon(sale, 16*60, 18*60)          * 240 * suyos * P.equilibrio;  // manana libra: salir pronto
+  if(libraAyer)   pts += escalon(-entra, -15*60, -12*60)      * 240 * suyos * P.equilibrio;  // ayer libro: entrar tarde
 
   /* Y el turno concreto, que es lo que se pidio: el 7-3 la vispera y el
      3-11 el dia de vuelta. Pesa mucho mas que lo de arriba, que se queda
@@ -4615,17 +4665,21 @@ function puntuarCandidato(ctx, emp, d, t, puestoId, pesos){
      empujarlo hacia ellos solo estropearia el reparto de los demas. */
   if(!entrenando(emp)){
     const ext = extremosDelDia(d, ctx.k);
-    const vispera = esLibre(manana), vuelta = esLibre(ayer);
-    /* Entre dos dias libres la regla se contradice sola: no se puede entrar
-       a las 7 por irse manana y a las 3 por haber vuelto hoy. Ese dia se
-       deja pasar y vale cualquiera de los dos. */
-    if(vispera !== vuelta){
+    const vispera = libraManana, vuelta = libraAyer;
+    /* Cuando el dia es LAS DOS COSAS -ayer libro y manana vuelve a librar,
+       con un solo dia de trabajo en medio- manda la vispera: se entra
+       temprano para empezar el descanso esa misma tarde.
+       Antes ese dia se dejaba pasar, y como los turnos de tarde se
+       reparten primero acababa casi siempre en el 3-11, que es justo lo
+       contrario de la regla. Pasa poco -6 veces en diez semanas medidas-
+       y siempre el domingo, entre el libre del sabado y el del lunes. */
+    if(vispera || vuelta){
       const quiere = vispera ? ext.mananas : ext.tardes;   // el grupo que le toca
       const evita  = vispera ? ext.tardes  : ext.mananas;  // justo el contrario
       if(quiere.indexOf(entra) >= 0){
         pts += 2000 * suyos * P.equilibrio;
         /* desempate: dentro del grupo, la punta del dia es la mejor */
-        const punta = vispera ? ext.pronto : ext.tarde;
+        const punta = vispera ? ext.pronto : ext.tarde;   // el 7-3, o el 3-11
         if(entra === punta) pts += 200 * suyos * P.equilibrio;
       }
       /* Y el castigo, que es la mitad que faltaba: los turnos de tarde se
@@ -4912,6 +4966,12 @@ function patronLibres(k, base, azar){
       const fuera = noDisp.filter(d => !dias.includes(d)).length;
       if(cabenTodos && fuera) return null;                                        // sus dias no disponibles van dentro
       let pts = fuera * 3000 + Math.max(0, racha - tope) * 400;
+      /* De que lado se pega el segundo dia al fijo lo dice su ficha. Pesa
+         mas que los avisos de 4000-6000 de mas abajo -si no, en cuanto una
+         semana venia justa el bloque se daba la vuelta solo- pero no es un
+         muro: si de verdad no cabe de ese lado, cabe del otro antes que
+         dejar un puesto principal vacio. */
+      if(fj >= 0 && dias.length >= 2 && !dias.includes(companeroDelFijo(e, fj))) pts += 12000;
       /* La racha con la semana SIGUIENTE tambien cuenta al puntuar, no solo
          al descartar. Sin esto, cuando no quedaba mas remedio que pasarse,
          la opcion elegida arreglaba un lado y disparaba el otro: asi salian
@@ -8050,6 +8110,32 @@ function verFeriadosDominicanos(anio){
   };
 }
 
+/* =====================================================================
+   LOS AVISOS DE ENCIMA DEL HORARIO
+   Los conflictos y los puestos sin cubrir se despliegan solos arriba.
+   Estan bien la primera vez y estorban la decima, asi que se pueden
+   apagar. Apagarlos NO cambia el horario ni tapa nada: 'Revisar' sigue
+   diciendo exactamente lo mismo cuando lo pidas, y el boton se queda a la
+   vista con la cuenta para que no se olviden encendidos.
+   ===================================================================== */
+function avisosEncendidos(){ return !(S.config && S.config.avisosHorario === false); }
+function alternarAvisos(){
+  S.config.avisosHorario = !avisosEncendidos();
+  bitacora(avisosEncendidos()
+    ? 'Se encendieron los avisos de encima del horario.'
+    : 'Se apagaron los avisos de encima del horario. Siguen saliendo en \'Revisar\'.');
+  guardar(); render();
+  toast(avisosEncendidos() ? 'Avisos encendidos' : 'Avisos apagados &middot; siguen en \'Revisar\'');
+}
+/* El boton para volver a encenderlos. Solo sale cuando estan apagados: si
+   estuviera siempre seria un boton mas que no hace falta, y apagarlos ya
+   se hace desde el propio aviso. */
+function botonAvisosHTML(){
+  if(avisosEncendidos()) return '';
+  return '<button class="btn sec sm" onclick="alternarAvisos()" title="Volver a ver los conflictos y los puestos sin cubrir encima del horario">' +
+    'Avisos <span class="pill off">apagados</span></button>';
+}
+
 /* El boton de las ausencias sale en los tres horarios: una vacacion de
    cualquiera afecta a su equipo, y no se sabe de antemano cual estaras
    mirando cuando te enteres. */
@@ -8966,13 +9052,16 @@ function pantallaHorario(){
          'Los agentes de renta se reparten respetando todas las reglas, gerencia y car control toman su horario fijo ' +
          'y los agentes de servicio giran sus turnos.</div>';
   }
-  if(rev.conflictos.length || rev.faltantes.length){
+  if(avisosEncendidos() && (rev.conflictos.length || rev.faltantes.length)){
     h += '<div class="noprint">';
     rev.conflictos.slice(0,3).forEach(c => h += '<div class="alert bad"><b>Conflicto</b>' + esc(c.texto) + (c.sugerencia ? '<br><i>' + esc(c.sugerencia) + '</i>' : '') + '</div>');
     rev.faltantes.slice(0,3).forEach((f,i) => h += '<div class="alert warn"><b>Puesto sin cubrir</b>' + esc(f.texto) +
       '<div class="row" style="margin-top:6px"><button class="btn sec sm" onclick="porQue(' + f.dia + ',\'' + f.turnoId + '\',\'' + f.puestoId + '\')">Ver por que</button>' +
       '<button class="btn sm" onclick="accionOtra()">Probar otro reparto</button></div></div>');
     if(rev.conflictos.length + rev.faltantes.length > 6) h += '<div class="alert info">Hay mas avisos. Pulsa "Revisar" para verlos todos.</div>';
+    h += '<div class="row" style="margin:-2px 0 8px">' +
+         '<button class="btn sec sm" onclick="alternarAvisos()">Apagar estos avisos</button>' +
+         '<span class="tiny muted">No cambia nada del horario: los sigues viendo cuando pulses <b>Revisar</b>.</span></div>';
     h += '</div>';
   }
 
@@ -9024,7 +9113,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-26-b';
+const SELLO_VERSION = '2026-08-26-d';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -9115,6 +9204,8 @@ function tablaEquipo(eq, mapaConf, vacia){
           (vacioEq ? 'Llenar este horario' : 'Completar lo que falta') + '</button>' +
           '<button class="btn sec sm" onclick="accionOtra()">Otra alternativa</button>' +
           '<button class="btn sec sm" onclick="menuLimpiar()">Limpiar o vaciar</button>' +
+          botonDuplicarHTML(eq) +
+          botonAvisosHTML() +
           botonAusenciasHTML() +
           /* Quien libra 2 dias. Solo tiene sentido con el reparto normal:
              con el de dos grupos encendido no hay "uno por semana" que
@@ -9148,6 +9239,8 @@ function tablaEquipo(eq, mapaConf, vacia){
               (feriados().length ? ' <span class="pill off">' + feriados().length + '</span>' : '') +
               '</button>'
             : '') +
+          botonDuplicarHTML(eq) +
+          botonAvisosHTML() +
           botonAusenciasHTML() +
           navSemanaHTML();
   }
@@ -9163,10 +9256,10 @@ function tablaEquipo(eq, mapaConf, vacia){
     return h;
   }
 
-  if(revEq && revEq.conflictos.length)
+  if(avisosEncendidos() && revEq && revEq.conflictos.length)
     h += '<div class="alert bad noprint" style="margin-bottom:8px"><b>' + revEq.conflictos.length + ' problema(s)</b>' +
          esc(revEq.conflictos[0].texto) + '</div>';
-  if(revEq && revEq.avisos.length)
+  if(avisosEncendidos() && revEq && revEq.avisos.length)
     h += '<div class="alert warn noprint" style="margin-bottom:8px">' + esc(revEq.avisos[0].texto) +
          (revEq.avisos.length > 1 ? ' <b>(+' + (revEq.avisos.length - 1) + ')</b>' : '') + '</div>';
 
@@ -9295,6 +9388,17 @@ function menuDosLibres(){
         (haceSombra(e) ? ' <span class="pill">hace sombra</span>' : '') +
         (e.libreFijo >= 0 ? '<small>libra fijo los ' + DIAS[e.libreFijo].toLowerCase() + 's: sus 2 dias incluiran ese</small>' : '') +
         (aparte ? '<small>ahora mismo no esta en la plantilla; si vuelve, ya lo tendra puesto</small>' : '') +
+        /* Con dia libre fijo, el bloque de dos cae a un lado o al otro y lo
+           eliges tu. Sin dia fijo no hay nada que elegir: el bloque va donde
+           mejor encaje. */
+        (e.libreFijo >= 0
+          ? '<select id="dl_lado_' + e.id + '" onclick="event.stopPropagation()" style="margin-top:6px;max-width:230px">' +
+            '<option value="despues"' + (ladoDosLibres(e) === 'despues' ? ' selected' : '') + '>' +
+              esc(DIAS[e.libreFijo] + ' y ' + DIAS[(e.libreFijo + 1) % 7].toLowerCase()) + '</option>' +
+            '<option value="antes"' + (ladoDosLibres(e) === 'antes' ? ' selected' : '') + '>' +
+              esc(DIAS[(e.libreFijo + 6) % 7] + ' y ' + DIAS[e.libreFijo].toLowerCase()) + '</option>' +
+            '</select>'
+          : '') +
       '</span></label>';
 
   let h = '<p class="muted" style="margin-top:0">Semana del ' + fechaLarga(SEMANA) + ' al ' + fechaLarga(addDias(SEMANA,6)) + '.</p>' +
@@ -9332,6 +9436,13 @@ function aplicarDosLibres(){
   const g = elegiblesDosLibres();
   const lista = g.dentro.concat(g.fuera);
   const ids = lista.filter(e => { const c = el('dl_' + e.id); return c && c.checked; }).map(e => e.id);
+  /* De que lado va el bloque de quien tiene dia fijo. Se guarda en la
+     ficha aunque esta vez no le toquen los dos dias: es como quiere sus
+     descansos, no cosa de una semana suelta. */
+  lista.forEach(e => {
+    const sel = el('dl_lado_' + e.id);
+    if(sel && (sel.value === 'antes' || sel.value === 'despues')) e.dosLibresLado = sel.value;
+  });
   const cuantas = Math.max(1, Math.min(52, parseInt((el('dl_semanas') || {}).value, 10) || 1));
   const publicadas = [], tocadas = [];
   for(let i = 0; i < cuantas; i++){
@@ -10447,6 +10558,78 @@ function duplicarAnterior(){
 }
 
 /* =====================================================================
+   COPIAR EL HORARIO DE UN EQUIPO A LA SEMANA SIGUIENTE
+   Cada equipo por su cuenta: se copian SOLO las casillas de su gente y
+   los otros dos horarios de esa semana se quedan como estaban. Sirve
+   para cuando una semana quedo bien y la siguiente viene igual.
+   No se navega a la semana siguiente a proposito: asi se pueden copiar
+   los tres equipos de una sentada sin ir y volver.
+   ===================================================================== */
+function botonDuplicarHTML(eq){
+  const vacio = equipoVacio(eq, SEMANA);
+  return '<button class="btn sec sm"' + (vacio ? ' disabled' : '') +
+    ' title="Copiar este horario a la semana del ' + esc(fechaLarga(addDias(SEMANA, 7))) + '"' +
+    ' onclick="duplicarEquipoSiguiente(\'' + eq + '\')">Duplicar a la siguiente</button>';
+}
+function duplicarEquipoSiguiente(eq){
+  const info = infoEquipo(eq);
+  const emps = plantilla(eq);
+  if(!emps.length) return toast('No hay nadie en este horario');
+  if(equipoVacio(eq, SEMANA)) return toast('Este horario esta en blanco, no hay nada que copiar');
+  const kSig = addDias(SEMANA, 7);
+  const destino = S.semanas[kSig];
+  if(destino && destino.estado === 'publicado')
+    return toast('La semana del ' + fechaLarga(kSig) + ' esta publicada. Vuelvela a borrador primero');
+
+  const habia = destino ? emps.some(e => { for(let d = 0; d < 7; d++) if(destino.celdas[ck(e.id, d)]) return true; return false; }) : false;
+  confirmar('Se copiara el horario de <b>' + esc(info.nombre) + '</b> a la semana del <b>' + fechaLarga(kSig) + '</b>.' +
+    (habia ? ' Lo que ese equipo tenga ya esa semana se reemplaza.' : '') +
+    ' Los otros dos horarios de esa semana no se tocan.', () => {
+    const r = copiarEquipoASemana(eq, SEMANA, kSig);
+    bitacora('Se copio el horario de ' + info.nombre + ' de la semana del ' + fechaLarga(SEMANA) +
+             ' a la del ' + fechaLarga(kSig) + '.');
+    guardar(); render();
+    toast(info.nombre + ' copiado a la semana del ' + fechaCorta(kSig) +
+          (r.quitadas ? ' &middot; ' + r.quitadas + ' turno(s) quitados por dia reservado o ausencia' : ''));
+  });
+}
+/* La copia en si, sin preguntar ni pintar: asi se puede comprobar sola. */
+function copiarEquipoASemana(eq, kOrigen, kDestino){
+  const origen = S.semanas[kOrigen];
+  if(!origen) return { copiadas:0, quitadas:0 };
+  const w = semana(kDestino);
+  let copiadas = 0;
+  plantilla(eq).forEach(e => {
+    for(let d = 0; d < 7; d++){
+      const key = ck(e.id, d);
+      delete w.celdas[key];                      // lo que hubiera de ese equipo se va
+      const c = origen.celdas[key];
+      if(!c) continue;
+      /* Se copia como puesto por el sistema, igual que 'Duplicar semana
+         anterior': asi 'Completar lo que falta' y 'Otra alternativa'
+         siguen pudiendo tocarlo si hace falta. */
+      const nueva = JSON.parse(JSON.stringify(c));
+      nueva.o = 'auto'; nueva.b = false;
+      w.celdas[key] = nueva;
+      copiadas++;
+    }
+  });
+  /* Los 2 dias libres del counter van con el horario: sin la lista, la
+     semana nueva diria que a esa persona le toca un dia y la hoja tendria
+     dos, y el revisor lo marcaria en rojo. */
+  if(eq === 'rotativo'){
+    const l = dosLibresDe(kOrigen);
+    if(l.length) w.dos2 = l.slice(); else delete w.dos2;
+  }
+  w.estado = 'borrador'; w.modificado = new Date().toISOString();
+  olvidarSemana(kDestino);
+  /* Los dias reservados en la ficha y las ausencias de ESA semana no se
+     heredan: lo que no encaje se quita aqui. */
+  const quitadas = sanearSemana(kDestino);
+  return { copiadas, quitadas };
+}
+
+/* =====================================================================
    ARRASTRAR Y SOLTAR
    ===================================================================== */
 let _drag = null;
@@ -11257,6 +11440,146 @@ function pruebas(){
      ev.eq.filas.map(f => f.libreDias.map(x => DIAS_CORTO[x]).join('+')).join(' '));
   ok('Nadie repite exactamente los mismos dias libres que otro',
      new Set(ev.eq.filas.map(f => f.libreDias.slice().sort((a,b)=>a-b).join(','))).size === ev.eq.filas.length);
+
+  /* =================================================================
+     LA VISPERA Y LA VUELTA, PARA TODO EL MOSTRADOR
+     El dia antes de librar se entra en el primer turno del dia -el 7-3
+     de la Terminal A o el 8-4 de la B- y el dia que se vuelve, en el
+     3-11. Se comprueba para TODOS los activos menos quien hace sombra o
+     esta en entrenamiento, que solo hace turnos de relleno.
+     Los dias de al lado se miran POR FECHA, no por la posicion en la
+     tabla: el lunes mira el domingo de la semana anterior.
+     ================================================================= */
+  (function(){
+    const libraEn = (empId, fecha) => {
+      const kk = lunesDe(fecha), dd = Math.round((s2d(fecha) - s2d(kk)) / 86400000);
+      const w = S.semanas[kk];
+      if(!w || !Object.keys(w.celdas || {}).length) return null;   // sin armar: no se sabe
+      const c = w.celdas[ck(empId, dd)];
+      return !!(c && c.t === LIBRE);
+    };
+    const mal = [], visto = [];
+    activos().forEach(e => {
+      if(haceSombra(e) || entrenando(e)) return;
+      for(let d = 0; d < 7; d++){
+        const c = celda(e.id, d, k);
+        if(!c || c.t === LIBRE) continue;
+        /* Lo que pusiste a mano manda sobre la regla: si fijaste un 3-11
+           la vispera, se queda. La regla es para lo que reparte solo. */
+        if(c.o === 'manual' || c.b) continue;
+        const t = turno(c.t);
+        if(!t) continue;
+        const f = fechaDe(k, d);
+        const manana = libraEn(e.id, addDias(f, 1)), ayer = libraEn(e.id, addDias(f, -1));
+        const x = extremosDelDia(d, k), entra = min2(t.inicio);
+        /* Si el dia es las dos cosas manda la vispera, igual que al repartir */
+        if(manana === true){
+          visto.push('v');
+          if(x.mananas.indexOf(entra) < 0) mal.push(e.nombre + ' ' + DIAS_CORTO[d] + ' vispera:' + t.corto);
+        } else if(ayer === true){
+          visto.push('r');
+          if(x.tardes.indexOf(entra) < 0) mal.push(e.nombre + ' ' + DIAS_CORTO[d] + ' vuelta:' + t.corto);
+        }
+      }
+    });
+    ok('La vispera se entra temprano y la vuelta por la tarde, para todo el mostrador',
+       mal.length === 0,
+       mal.join('  |  ') || (visto.length + ' dia(s) comprobado(s), todos cumplen'));
+  })();
+
+  /* =================================================================
+     DE QUE LADO VAN LOS 2 DIAS DE QUIEN TIENE DIA FIJO
+     Con el domingo fijo, o sabado+domingo o domingo+lunes. Lo dice su
+     ficha, y tiene que salir asi tambien en las semanas justas: antes
+     ganaba por 900 puntos y cualquier aviso de 4000 le daba la vuelta.
+     ================================================================= */
+  (function(){
+    const fijo = E.find(x => x.libreFijo >= 0 && !haceSombra(x));
+    if(!fijo || !dosLibresManual()) return;
+    const kx = addDias(k, 10500);
+    const guardaSem = SEMANA, guardaLado = fijo.dosLibresLado;
+    const limpiar = () => { olvidarLibres(); olvidarRefuerzos(); olvidarObjetivoTipo(); };
+    SEMANA = kx; semana(kx).dos2 = [fijo.id]; limpiar();
+    const fj = fijo.libreFijo;
+    const par = () => (patronLibres(kx, {}, 0)[fijo.id] || []).slice().sort((a,b) => a-b);
+
+    fijo.dosLibresLado = 'despues'; limpiar();
+    const desp = par();
+    ok('Con dia fijo y 2 dias, el segundo va DESPUES si asi lo pides',
+       desp.length === 2 && desp.indexOf(fj) >= 0 && desp.indexOf((fj + 1) % 7) >= 0,
+       fijo.nombre + ' (fijo ' + DIAS_CORTO[fj] + '): ' + desp.map(d => DIAS_CORTO[d]).join('+'));
+
+    fijo.dosLibresLado = 'antes'; limpiar();
+    const ant = par();
+    ok('Y ANTES si lo pides al reves',
+       ant.length === 2 && ant.indexOf(fj) >= 0 && ant.indexOf((fj + 6) % 7) >= 0,
+       fijo.nombre + ': ' + ant.map(d => DIAS_CORTO[d]).join('+'));
+
+    fijo.dosLibresLado = guardaLado;
+    delete S.semanas[kx]; SEMANA = guardaSem; limpiar();
+  })();
+
+  /* =================================================================
+     DUPLICAR EL HORARIO DE UN EQUIPO A LA SEMANA SIGUIENTE
+     Cada equipo por su cuenta: los otros dos no se tocan.
+     ================================================================= */
+  (function(){
+    const rent = plantilla('rotativo'), serv = plantilla('servicio');
+    const tt = turnosActivos()[0], pp = puestosActivos()[0];
+    if(!rent.length || !serv.length || !tt || !pp) return;
+    const kA = addDias(k, 11200), kB = addDias(kA, 7);
+    const guardaSem = SEMANA;
+    const wA = semana(kA), wB = semana(kB);
+    rent.forEach(e => { wA.celdas[ck(e.id, 1)] = { t:tt.id, p:pp.id, o:'auto', b:false }; });
+    wA.dos2 = [rent[0].id];
+    /* El origen se sanea primero: estas casillas son de mentira y a quien
+       no pueda hacer ese puesto se le quitan igual en las dos semanas. Lo
+       que se comprueba es que la copia sea fiel, no que sanear no exista. */
+    sanearSemana(kA);
+    const esperadas = rent.filter(e => wA.celdas[ck(e.id, 1)]).length;
+    wB.celdas[ck(serv[0].id, 3)] = { t:tt.id, p:pp.id, o:'auto', b:false };
+    const antesServicio = Object.keys(wB.celdas).length;
+
+    const r = copiarEquipoASemana('rotativo', kA, kB);
+    const enB = rent.filter(e => wB.celdas[ck(e.id, 1)]).length;
+    ok('Duplicar un equipo copia sus casillas a la semana siguiente',
+       esperadas > 0 && enB === esperadas, enB + ' de ' + esperadas + ' copiadas');
+    ok('Y no toca el horario de los otros equipos de esa semana',
+       !!wB.celdas[ck(serv[0].id, 3)] && Object.keys(wB.celdas).length === antesServicio + esperadas,
+       'servicio sigue: ' + !!wB.celdas[ck(serv[0].id, 3)] +
+       ' &middot; ' + Object.keys(wB.celdas).length + ' casillas, esperadas ' + (antesServicio + esperadas));
+    ok('Se lleva tambien la lista de quien libra 2 dias',
+       (wB.dos2 || [])[0] === rent[0].id,
+       (wB.dos2 || []).map(id => (empleado(id)||{}).nombre).join(', ') || 'no se copio');
+    ok('Lo copiado queda como puesto por el sistema, no bloqueado',
+       rent.every(e => { const c = wB.celdas[ck(e.id, 1)]; return !c || (c.o === 'auto' && !c.b); }));
+    ok('Y es la misma casilla que en la semana de origen',
+       rent.every(e => { const a = wA.celdas[ck(e.id, 1)], b = wB.celdas[ck(e.id, 1)];
+                         return (!a && !b) || (a && b && a.t === b.t && a.p === b.p); }));
+    ok('La semana copiada queda en borrador', wB.estado === 'borrador', wB.estado);
+
+    delete S.semanas[kA]; delete S.semanas[kB];
+    SEMANA = guardaSem; olvidarTodo();
+  })();
+
+  /* Los avisos de encima del horario se pueden apagar, y apagarlos no
+     esconde nada: 'Revisar' sigue diciendo lo mismo. */
+  (function(){
+    const guarda = S.config.avisosHorario;
+    const antes = revisar(ctxReal(k), k);
+    S.config.avisosHorario = false;
+    const luego = revisar(ctxReal(k), k);
+    ok('Apagar los avisos no cambia lo que encuentra Revisar',
+       (antes.conflictos || []).length === (luego.conflictos || []).length &&
+       (antes.faltantes || []).length === (luego.faltantes || []).length,
+       (luego.conflictos || []).length + ' conflicto(s) y ' + (luego.faltantes || []).length + ' sin cubrir, con avisos apagados');
+    ok('Apagados, queda el boton para volver a encenderlos',
+       !avisosEncendidos() && botonAvisosHTML().indexOf('alternarAvisos') >= 0);
+    S.config.avisosHorario = true;
+    ok('Y encendidos ese boton no estorba',
+       avisosEncendidos() && botonAvisosHTML() === '');
+    S.config.avisosHorario = guarda;
+  })();
   const libranDia = (d) => cupoLibres(d, k);
   /* Se cuentan los que CUBREN, que es lo que cuenta 'libranDia'. El
      descanso de la sombra va por su lado: no le quita el sitio a nadie. */
@@ -12312,16 +12635,25 @@ function pruebas(){
        })(),
        e ? e.nombre + ': ' + Math.round(puntos(libreEl(0), t311)) + ' contra ' + Math.round(puntos(libreEl(0), t73)) : '');
 
-    ok('Entre dos dias libres la regla no empuja a ningun lado',
+    ok('Entre dos dias libres manda la vispera: el 7-3',
        (() => {
          if(!e) return true;
-         /* lunes y miercoles libres: el martes es vispera Y vuelta a la vez,
-            asi que la regla se contradice y no debe inclinar la balanza */
+         /* Lunes y miercoles libres: el martes es vispera Y vuelta a la vez.
+            Antes se dejaba pasar, y como los turnos de tarde se reparten
+            primero ese dia acababa casi siempre en el 3-11 -justo lo
+            contrario de la regla-. Ahora manda la vispera: se entra
+            temprano para empezar el descanso esa misma tarde. */
          const c = {};
          c[ck(e.id, 0)] = { t:LIBRE, p:null, o:'auto', b:false };
          c[ck(e.id, 2)] = { t:LIBRE, p:null, o:'auto', b:false };
-         return Math.abs(puntos(c, t73) - puntos(c, t311)) < 900;
-       })());
+         return puntos(c, t73) > puntos(c, t311);
+       })(),
+       e ? e.nombre + ': ' + Math.round(puntos((() => { const c = {};
+             c[ck(e.id,0)] = { t:LIBRE, p:null, o:'auto', b:false };
+             c[ck(e.id,2)] = { t:LIBRE, p:null, o:'auto', b:false }; return c; })(), t73)) + ' contra ' +
+           Math.round(puntos((() => { const c = {};
+             c[ck(e.id,0)] = { t:LIBRE, p:null, o:'auto', b:false };
+             c[ck(e.id,2)] = { t:LIBRE, p:null, o:'auto', b:false }; return c; })(), t311)) : '');
 
     ok('Quien esta en entrenamiento se queda fuera de esa regla',
        (() => {
