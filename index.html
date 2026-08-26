@@ -9083,7 +9083,11 @@ function pantallaHorario(){
        '<span class="noprint">&#9679; Puesto por ti, el sistema no lo toca</span>' +
        '<span class="noprint">&#9888; Con problema</span></div>';
 
-  h += resumenHTML(rev.equidad);
+  /* Aqui iba el 'Resumen de la semana' -la tabla de equilibrio, horas,
+     visitas a B y tipos de turno-. El usuario lo quito el 26 de agosto de
+     2026. Las cuentas siguen haciendose igual: las usa 'Revisar', el
+     reparto para equilibrar y las pruebas; lo unico que se fue es la
+     tabla de debajo del horario. */
   return h;
 }
 
@@ -9113,7 +9117,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-26-d';
+const SELLO_VERSION = '2026-08-26-e';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -9660,37 +9664,6 @@ function marcaCorta(p){
 function textoLibres(dias){
   if(dias.length === 2 && dias.includes(0) && dias.includes(6)) return 'Dom + Lun';
   return dias.map(x => DIAS_CORTO[x]).join(', ');
-}
-
-function resumenHTML(eq){
-  let h = '<div class="card" style="margin-top:16px"><h2>Resumen de la semana</h2>';
-  h += '<div class="grid g4" style="margin-bottom:12px">' +
-    kpi(eq.equilibrio + '%', 'Equilibrio') +
-    kpi(eq.cumplimiento + '%', 'Dias que tocan cumplidos') +
-    kpi(eq.faltan, 'Puestos sin cubrir') +
-    kpi(eq.difB, 'Diferencia de visitas a B') + '</div>';
-  h += '<table class="data"><thead><tr><th>Empleado</th><th>Dias</th><th>Horas</th><th>Terminal B</th>' +
-       '<th>Tempranos</th><th>Intermedios</th><th>Tardios</th><th>Fin de semana</th><th>Libres</th></tr></thead><tbody>';
-  eq.filas.forEach(f => {
-    const toca = diasObjetivoDe(f.empId, SEMANA);
-    const cd = f.dias === toca ? 'ok' : (f.dias > toca ? 'bad' : 'warn');
-    const cb = f.visitasB === objetivoBDe(f.empId) ? 'ok' : (f.visitasB > S.config.maxB ? 'bad' : 'warn');
-    h += '<tr><td><b>' + esc(f.nombre) + '</b></td>' +
-         '<td><span class="pill ' + cd + '">' + f.dias + ' / ' + toca + '</span></td>' +
-         '<td>' + f.horas + ' h</td>' +
-         '<td><span class="pill ' + cb + '">' + f.visitasB + '</span></td>' +
-         '<td>' + f.tempranos + '</td><td>' + f.intermedios + '</td><td>' + f.tardes + '</td><td>' + f.findes + '</td>' +
-         '<td>' + f.libres + (f.libreDias.length ? ' <span class="tiny muted">(' + textoLibres(f.libreDias) + ')</span>' : '') +
-         (f.libreDias.length > 1 ? (diasSeguidos(f.libreDias) ? ' <span class="pill ok">seguidos</span>' : ' <span class="pill bad">separados</span>') : '') + '</td></tr>';
-  });
-  h += '</tbody></table>';
-  const dos = empleado(turnoDosLibres(SEMANA));
-  h += '<p class="tiny muted" style="margin-bottom:0">Esta semana los <b>2 dias libres seguidos</b> son de <b>' +
-       esc(dos ? dos.nombre : '-') + '</b>; los demas libran uno. El dia antes de librar entra lo mas temprano que se pueda ' +
-       'y el dia que vuelve entra lo mas tarde posible, para estirar el descanso por los dos lados. ' +
-       'A quien le toca <b>domingo y lunes</b> el descanso no se corta: enlaza con la semana de al lado.</p>';
-  h += '</div>';
-  return h;
 }
 
 /* =====================================================================
