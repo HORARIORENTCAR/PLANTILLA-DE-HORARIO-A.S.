@@ -3794,11 +3794,20 @@ function nubeLista(){
   const n = nubeConfig();
   return !!(n.activa && n.url && n.clave);
 }
+/* La direccion y la clave son texto ASCII puro. Al copiarlas de un chat, un
+   correo o WhatsApp se cuelan a veces caracteres invisibles (espacios de
+   ancho cero, saltos raros) y el navegador se niega a mandarlos en una
+   cabecera: "String contains non ISO-8859-1 code point". Se quitan aqui,
+   en la puerta, para que no importe de donde venga el texto. */
+function nubeLimpiar(t){
+  return String(t == null ? '' : t).replace(/[^\x21-\x7e]/g, '');
+}
 function nubeCabeceras(clave){
+  clave = nubeLimpiar(clave);
   return { apikey:clave, Authorization:'Bearer ' + clave, 'Content-Type':'application/json' };
 }
 function nubeBase(url){
-  return String(url).trim().replace(/\/+$/,'') + '/rest/v1/' + NUBE_TABLA;
+  return nubeLimpiar(url).replace(/\/+$/,'') + '/rest/v1/' + NUBE_TABLA;
 }
 function nubeMensajeError(e){
   const t = String(e && e.message ? e.message : e);
@@ -3806,6 +3815,8 @@ function nubeMensajeError(e){
     return 'No se pudo contactar con la nube. Revisa tu conexion a internet y que la direccion del proyecto este bien escrita.';
   if(/relation .* does not exist|42P01/i.test(t))
     return 'La tabla "horarios" todavia no existe en tu proyecto. Copia el texto de la casilla de abajo y ejecutalo en Supabase.';
+  if(/ISO-8859-1|code point/i.test(t))
+    return 'La direccion o la clave traen un caracter raro. Borra el campo entero y vuelve a pegarla.';
   if(/JWT|apikey|401|Invalid/i.test(t))
     return 'La clave no es valida. Copia de nuevo la clave publica (anon) desde Supabase.';
   return t;
@@ -8537,8 +8548,8 @@ function borrarTurno(id){
 function nubeLeerFormulario(){
   const n = nubeConfig();
   const txt = (id) => { const e = el(id); return (e && typeof e.value === 'string') ? e.value.trim() : null; };
-  const u = txt('nube_url');    if(u !== null) n.url = u;
-  const c = txt('nube_clave');  if(c !== null) n.clave = c;
+  const u = txt('nube_url');    if(u !== null) n.url = nubeLimpiar(u);
+  const c = txt('nube_clave');  if(c !== null) n.clave = nubeLimpiar(c);
   const i = txt('nube_id');     if(i !== null) n.id = i || 'principal';
   const a = el('nube_activa');  if(a && typeof a.checked === 'boolean') n.activa = a.checked;
   return n;
@@ -8631,7 +8642,7 @@ function pegarConexion(){
 }
 function aplicarConexion(){
   const txt = (el('pegar_con').value || '').trim();
-  const p = txt.split('|').map(x => x.trim());
+  const p = txt.split('|').map(x => nubeLimpiar(x));
   if(p[0] !== 'HORARIOS1' || !p[1] || !p[2]){
     el('pegar_con').value = txt;
     return toast('Ese texto no es valido. Debe empezar por HORARIOS1|');
@@ -9134,7 +9145,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-09-09-a';
+const SELLO_VERSION = '2026-09-09-b';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
