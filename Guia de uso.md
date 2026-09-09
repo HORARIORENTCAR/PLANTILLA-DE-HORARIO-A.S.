@@ -272,7 +272,7 @@ Y solo se abre los días en que hay **seis trabajando y una sola persona librand
 
 Los puestos de relleno **se pueden quedar vacíos sin que pase nada**: para eso son. Lo que nunca se sacrifica es un principal.
 
-### Primero las cuatro puntas; el 11-7 de la B, lo menos posible
+### Primero las cuatro puntas; el 11-7 de la B, solo con cuatro
 
 Lo que se intenta **siempre** es cubrir las **cuatro puntas**, que son las que abren y cierran los dos mostradores:
 
@@ -280,19 +280,30 @@ Lo que se intenta **siempre** es cubrir las **cuatro puntas**, que son las que a
 |---|---|
 | **Terminal B** | **8-4 y 3-11** |
 
-El turno único de **11-7 en la Terminal B** es la salida de emergencia y se usa lo menos posible.
+El turno único de **11-7 en la Terminal B** es la salida de emergencia, y desde el 9 de septiembre de 2026 tiene una sola condición: **sale únicamente los días en que trabajan cuatro personas o menos, contando a ISAAC**. Con cinco —cuatro que cubren más ISAAC de sombra, o cinco que cubren— no aparece: los cuatro hacen las cuatro puntas y el 10-6 lo tapa ISAAC. Ni el domingo ni ningún otro día.
 
-**Con cinco agentes en plantilla no se fusiona.** Libra uno al día, quedan cuatro trabajando que hacen las cuatro puntas, e **ISAAC sale de sombra para el 10-6** y pone la quinta mano. Los dos mostradores quedan abiertos de punta a punta.
+Antes se miraba la plantilla presente sin descontar los descansos, y el domingo salía el 11-7 aunque no hiciera falta: ALAN libra fijo, la cuenta bajaba a cuatro presentes y se fusionaba. Eso ya no pasa.
 
-**Solo por debajo de eso se recurre al 11-7**, porque ahí no hay manos ni para las puntas. Entonces:
+La cuenta se hace **día por día y antes de repartir**, con el pronóstico de descansos: el día fijo de la ficha, el día que toca por rotación y los segundos días que hayas dado a mano. Es el mismo criterio que sigue el reparto, así que lo que se decide coincide con lo que sale en la hoja.
+
+Cuando sí toca fusionar:
 
 - La Terminal B pasa a cubrirse con **un solo turno, de 11 de la mañana a 7 de la tarde**.
 - Ese turno pasa a ser el **primer puesto de la lista**, por delante de las puntas de la Terminal A.
-- **Se acaba el turno de dos días libres seguidos**: esa semana cada uno libra un día y punto.
+- Con cuatro o menos que cubran en plantilla, esa semana **cada uno libra un día y punto**: no hay margen para el segundo.
 
 **Por qué la Terminal B va la primera** cuando toca fusionar. Los puestos se abren por orden y de arriba abajo, así que el que se cae cuando no dan las manos es siempre el último. Poniendo la Terminal B arriba, el que se queda vacío en un día muy corto es un turno de la **Terminal A**, donde la otra punta sigue cubierta, y nunca la Terminal B, que es la que no puede quedarse sola.
 
-Medido con cinco agentes más ISAAC: **el 11-7 sale un día de siete** en vez de todos, sin puestos vacíos ni conflictos. Con cuatro agentes sale los siete días, que ahí no hay alternativa.
+Medido el 9 de septiembre de 2026 sobre tres semanas por escenario, con ISAAC de sombra y también ya listo:
+
+| Plantilla presente | El 11-7 | Puestos principales vacíos |
+|---|---|---|
+| 6 que cubren + ISAAC | ningún día | 0 |
+| 5 que cubren + ISAAC (uno de vacaciones) | ningún día | 0 |
+| 4 que cubren + ISAAC (dos de vacaciones) | solo los días con cuatro trabajando, 5 de 7 | 0 |
+| 3 que cubren + ISAAC | todos los días | los que da la aritmética |
+
+Una consecuencia que hubo que cuidar: **el domingo de ALAN**. Al dejar de fusionar ese día, la regla de "el día fijo cede ante un principal" contaba cuatro manos para cinco puestos y le quitaba el domingo. Esa cuenta ahora suma la mano de ISAAC en el 10-6, igual que ya la sumaban el reparto de descansos y los avisos. ALAN conserva su domingo con uno de vacaciones y también con dos.
 
 En cuanto vuelve a haber gente suficiente, la Terminal B recupera sus dos turnos sola.
 

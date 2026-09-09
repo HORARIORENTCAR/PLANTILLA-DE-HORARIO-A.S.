@@ -1155,7 +1155,7 @@ function datosDemo(){
 
   const k = lunesDe(hoyISO());
   return {
-    version: 29,
+    version: 30,
     empresa: 'ANDEL STAR',
     pin: '1234',
     config: {
@@ -2176,7 +2176,18 @@ function migrar(){
              'a quien quieras y por las semanas que quieras.' +
              (heredadas ? ' Se conservaron ' + heredadas + ' semana(s) que ya tenias elegidas a mano.' : ''));
   }
-  S.version = 29;
+  /* --- v30: el 11-7 de la Terminal B solo con cuatro cuerpos --- */
+  if(!(S.version >= 30)){
+    /* El usuario lo pidio el 9 de septiembre de 2026: que el 11-7 no
+       salga forzosamente los domingos, solo los dias en que haya cuatro
+       en total contando a quien hace sombra. Los borradores armados con
+       la regla vieja llevan el 11-7 escrito en las casillas: se rehacen. */
+    olvidarTodo();
+    pedirRehacerBorradores();
+    bitacora('El 11-7 de la Terminal B ya solo sale los dias en que trabajan cuatro personas o menos contando a quien hace sombra. ' +
+             'Antes salia tambien los domingos con cinco, por el dia libre fijo.');
+  }
+  S.version = 30;
 }
 
 function cargar(){
@@ -2985,7 +2996,11 @@ function objetivoBDe(empId){
    asi que se guarda hecha. Se vacia en guardar() y al tocar los ajustes. */
 let _priCache = null;
 let _cortaCache = { k:null, firma:null, dias:null };
-function olvidarPrioridad(){ _priCache = null; _cortaCache = { k:null, firma:null, dias:null }; }
+function olvidarPrioridad(){
+  _priCache = null;
+  _cortaCache = { k:null, firma:null, dias:null };
+  _cuerposCache = { k:null, firma:null, dias:null };
+}
 function listaPrioridad(){
   if(_priCache) return _priCache.todos;
   const l = (S.config && Array.isArray(S.config.prioridad)) ? S.config.prioridad : [];
@@ -3062,35 +3077,127 @@ function sabeCubrirNucleoBase(e, d, k){
    ausencias y los dias fijos, que no dependen de nada.
    ===================================================================== */
 const PUNTAS = 4;              // las dos mananas y las dos tardes
+/* =====================================================================
+   LA REGLA DEL 9 DE SEPTIEMBRE DE 2026: EL 11-7 SOLO CON CUATRO CUERPOS
+   El 11-7 de la Terminal B sale UNICAMENTE los dias en que van a trabajar
+   cuatro personas o menos, contando a quien hace sombra. Con cinco
+   -cuatro que cubren mas la sombra, o cinco que cubren- se abren las
+   cuatro puntas y el 10-6 (la sombra lo tapa si hace falta) y el 11-7 no
+   aparece.
+
+   Antes se contaba la plantilla PRESENTE sin descontar los descansos, y
+   el domingo salia el 11-7 "porque si": ALAN libra fijo los domingos, la
+   cuenta bajaba a cuatro presentes y se fusionaba, aunque esos cuatro
+   mas la sombra dan para las cuatro puntas y el 10-6. El usuario lo
+   pidio asi: que no aparezca forzosamente los domingos; solo cuando ese
+   dia haya un total de cuatro contando a ISAAC.
+
+   Aqui no se puede preguntar por los dias libres de la hoja ni por
+   'trabajanDia': ellos preguntan por los puestos del dia, que es justo lo
+   que se decide aqui (la pescadilla que se muerde la cola), y ademas esto
+   se pregunta en dos momentos -al repartir los descansos y al repartir
+   los turnos- y tiene que contestar lo mismo en los dos. Por eso se usa
+   un PRONOSTICO de descansos que no mira ninguna cuenta de puestos: el
+   dia fijo de la ficha, el dia que toca por rotacion y los segundos dias
+   que hayas dado a mano. Es el mismo criterio que luego sigue el reparto
+   de descansos, asi que las dos fases ven la misma semana.
+   ===================================================================== */
+/* Los dias que esa persona va a librar esa semana, sin preguntar por los
+   puestos del dia. Calca 'diaLibreIdeal', 'bloqueDosLibres' y
+   'librePrevistoDe', pero con el dia fijo de la ficha tal cual (sin
+   preguntar si cede) y con el numero de dias sin pasar por el cupo. */
+function libresPrevistosBrutos(e, k){
+  const fuera = diasAusente(e.id, k);
+  if(fuera.length >= 7) return [];
+  /* cuantos le tocan: la misma cadena de mando que libresPorPersona */
+  let disponibles = 0;
+  activos().forEach(x => { if(!haceSombra(x) && diasAusente(x.id, k).length < 7) disponibles++; });
+  const corta = disponibles <= PLANTILLA_CORTA;
+  const dosUno = modoDosUno() && !corta;
+  let n = dosUno ? (leTocanDosLibres(e.id, k) ? 2 : 1)
+        : dosLibresManual() ? (tieneDosLibres(e.id, k) ? 2 : 1)
+        : corta ? 1
+        : (e.dosLibresFijos ? 2 : (turnoDosLibres(k) === e.id ? 2 : 1));
+  n = Math.max(0, Math.min(n, 7 - fuera.length));
+  if(!n) return [];
+  const fijo = (e.libreFijo >= 0 && fuera.indexOf(e.libreFijo) < 0) ? e.libreFijo : -1;
+  let ideal = fijo;
+  if(ideal < 0){
+    const fijos = {};
+    activos().forEach(x => { if(x.libreFijo >= 0) fijos[x.libreFijo] = 1; });
+    const dias = [];
+    for(let d = 0; d < 7; d++) if(!fijos[d]) dias.push(d);
+    if(!dias.length) ideal = 0;
+    else {
+      const giran = activos().filter(x => x.libreFijo < 0);
+      const i = giran.findIndex(x => x.id === e.id);
+      if(i < 0) ideal = dias[0];
+      else {
+        const m = ((semanasAbsolutas(k) % dias.length) + dias.length) % dias.length;
+        ideal = dias[(i + m) % dias.length];
+      }
+    }
+  }
+  let bloque;
+  if(n >= 2){
+    if(fijo >= 0){
+      const comp = companeroDelFijo(e, fijo);
+      bloque = ladoDosLibres(e) === 'antes' ? [comp, fijo] : [fijo, comp];
+    } else bloque = bloqueDias(ideal, 2);
+  } else bloque = [ideal];
+  /* el bloque de dos se mueve entero para esquivar una ausencia */
+  if(bloque.length >= 2){
+    for(let i = 0; i < 7; i++){
+      const a = (bloque[0] + i) % 7, b = (a + 1) % 7;
+      if(fuera.indexOf(a) < 0 && fuera.indexOf(b) < 0) return [a, b];
+    }
+  }
+  const out = [];
+  bloque.forEach(d0 => {
+    let d = d0;
+    for(let i = 0; i < 7 && (fuera.indexOf(d) >= 0 || out.indexOf(d) >= 0); i++) d = (d + 1) % 7;
+    if(fuera.indexOf(d) < 0 && out.indexOf(d) < 0) out.push(d);
+  });
+  return out;
+}
+/* Cuantos cuerpos van a trabajar ese dia segun el pronostico: los que
+   cubren y ademas saben hacer una punta, mas la sombra si ese dia puede
+   salir a tapar el 10-6. Se guarda hecho: se pregunta miles de veces. */
+let _cuerposCache = { k:null, firma:null, dias:null };
+function cuerposPrevistos(d, k){
+  k = k || SEMANA;
+  const emps = activos();
+  const w = S.semanas[k];
+  /* La firma es barata a proposito: esto se pregunta decenas de miles de
+     veces al armar una semana. Todo lo que cambia el pronostico (fichas,
+     ausencias, los 2 dias a mano, los ajustes) pasa por guardar(), que
+     vacia esta memoria con olvidarPrioridad(). */
+  const firma = emps.length + '|' + (S.ausencias || []).length + '|' + dosLibresDe(k).join('+') +
+    '|' + ((w && w.turno2) || '') + '|' + (modoDosUno() ? 'd' : '') + (dosLibresManual() ? 'm' : '');
+  if(!(_cuerposCache.k === k && _cuerposCache.firma === firma)){
+    const dias = [0,0,0,0,0,0,0];
+    const rescate = (S.config.prioridad || []).find(x => x.clave && esRescateDeSombra(x.puestoId, x.turnoId));
+    emps.forEach(e => {
+      const libres = libresPrevistosBrutos(e, k);
+      for(let dd = 0; dd < 7; dd++){
+        if(ausenteEnDia(e.id, dd, k)) continue;
+        if(e.diasDisponibles && e.diasDisponibles[dd] === false) continue;
+        if(libres.indexOf(dd) >= 0) continue;
+        if(haceSombra(e)){
+          /* la sombra es un cuerpo solo si ese dia puede salir al 10-6 */
+          if(rescate && (e.puestosProhibidos || []).indexOf(rescate.puestoId) < 0) dias[dd]++;
+          continue;
+        }
+        if(sabeCubrirNucleoBase(e, dd, k)) dias[dd]++;
+      }
+    });
+    _cuerposCache = { k, firma, dias };
+  }
+  return _cuerposCache.dias[d] || 0;
+}
 function esPlantillaCorta(d, k){
   k = k || SEMANA;
-  /* Agentes de verdad ese dia -la sombra no sostiene ninguna punta-.
-
-     Se cuenta la PLANTILLA presente, no quien trabaja: los dias libres no
-     se pueden mirar aqui. Esto se pregunta en dos momentos -al repartir
-     los descansos y al repartir los turnos- y tiene que contestar lo
-     mismo en los dos; si mirara los dias libres, en el primer momento
-     todavia no existen y en el segundo si, las dos fases se
-     contradecirian y los dos dias de descanso seguidos salen partidos
-     (probado: lunes y miercoles en vez de pegados).
-
-     El umbral son CINCO presentes, no cuatro, y por eso: con cinco en
-     plantilla libra uno al dia y quedan cuatro trabajando, que es justo
-     lo que hace falta para las cuatro puntas -la sombra pone la quinta
-     mano en el 10-6-. Con cuatro presentes quedarian tres, y ahi si hay
-     que fusionar la Terminal B en el 11-7. */
-  let hay = 0;
-  activos().forEach(e => { if(!haceSombra(e) && !ausenteEnDia(e.id, d, k)) hay++; });
-  if(hay <= PUNTAS) return true;
-  /* Y los que ademas PUEDEN hacer una punta: no vale contar cabezas si
-     una de ellas tiene vetada la Terminal B o la marca de Hertz. */
-  let aptos = 0;
-  activos().forEach(e => {
-    if(ausenteEnDia(e.id, d, k)) return;
-    if(e.libreFijo === d) return;
-    if(sabeCubrirNucleoBase(e, d, k)) aptos++;
-  });
-  return aptos <= PUNTAS;
+  return cuerposPrevistos(d, k) <= PUNTAS;
 }
 /* Los puestos que se pueden abrir ese dia, ya en orden */
 function prioridadDia(d, k){
@@ -3188,7 +3295,14 @@ function fijoVigente(e, k){
      principales, su dia fijo cede: cubrir lo principal manda sobre la
      comodidad de librar siempre el mismo dia. Ese descanso no se pierde,
      se lo lleva a otro dia de la misma semana. */
-  if(sabeCubrirNucleo(e, d, k) && capacesRespetandoFijos(d, k) < nucleoDia(d, k)) return -1;
+  /* La mano de la sombra cuenta aqui igual que en cupoLibresIdeal y en
+     los avisos: si ese dia puede salir a tapar el 10-6, hay una cabeza
+     mas. Hizo falta el 9 de septiembre de 2026, al dejar de fusionar la
+     Terminal B con cinco cuerpos: sin esto, con uno de vacaciones el
+     domingo contaba cuatro para cinco principales y ALAN perdia su dia
+     fijo, aunque esos cuatro mas la sombra dan para todo. */
+  if(sabeCubrirNucleo(e, d, k) &&
+     capacesRespetandoFijos(d, k) + (sombraDeRescateHoy(d, k) ? 1 : 0) < nucleoDia(d, k)) return -1;
   return d;
 }
 /* Quien libra ese dia si o si porque lo tiene fijo en su ficha */
@@ -9145,7 +9259,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-09-09-b';
+const SELLO_VERSION = '2026-09-09-c';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
@@ -12433,12 +12547,13 @@ function pruebas(){
   })();
 
   /* =================================================================
-     PLANTILLA CORTA: CUATRO PERSONAS Y EL ENTRENAMIENTO QUE CEDE
-     Con cuatro disponibles uno libra y quedan tres. La Terminal B pasa
-     entonces a un turno unico de 11 a 7 y, sobre todo, es el PRIMER
-     puesto que se abre: los puestos se abren por orden, asi que el que
-     se cae cuando no dan las manos es siempre uno de la Terminal A y
-     nunca la Terminal B.
+     PLANTILLA CORTA: EL 11-7 DE LA TERMINAL B SOLO CON CUATRO CUERPOS
+     Desde el 9 de septiembre de 2026 el turno unico de 11 a 7 sale
+     UNICAMENTE los dias en que van a trabajar cuatro personas o menos
+     contando a la sombra. Con cuatro que cubren mas la sombra, el dia
+     que uno libra quedan tres mas la sombra: ese dia se fusiona la
+     Terminal B y el 11-7 es el PRIMER puesto que se abre. El dia que no
+     libra nadie son cinco cuerpos y el 11-7 no aparece.
      Quien esta en entrenamiento NO entra en esa cuenta: hace sombra y no
      cubre puesto, ni siquiera los dias de apuro. Por eso "cuatro
      personas" aqui quiere decir cuatro que puedan cubrir, y la sombra va
@@ -12465,26 +12580,39 @@ function pruebas(){
     const ctxC = ctxReal(kc);
     const tB = turnoUnicoB(), pB = puestoTerminalB();
 
-    ok('Con cuatro personas la Terminal B es el primer puesto que se abre',
+    ok('El 11-7 de la Terminal B sale solo los dias en que trabajan cuatro o menos contando la sombra',
        (() => { if(!tB || !pB) return false;
+         let fusionados = 0;
          for(let d = 0; d < 7; d++){
-           if(!esPlantillaCorta(d, kc)) return false;
-           const pri = prioridadDia(d, kc);
-           if(!pri.length || pri[0].puestoId !== pB.id || pri[0].turnoId !== tB.id) return false;
-         } return true; })(),
-       'turno unico de 11-7 y por delante de las dos puntas de la Terminal A');
+           const esperado = cuerposPrevistos(d, kc) <= PUNTAS;
+           if(esPlantillaCorta(d, kc) !== esperado) return false;
+           if((ocupacion(ctxC, d, tB.id, pB.id) >= 1) !== esperado) return false;
+           if(esperado){
+             fusionados++;
+             const pri = prioridadDia(d, kc);
+             if(!pri.length || pri[0].puestoId !== pB.id || pri[0].turnoId !== tB.id) return false;
+           }
+         }
+         return fusionados >= 1 && fusionados <= 6; })(),
+       (() => { const l = [];
+         for(let d = 0; d < 7; d++) l.push(DIAS_CORTO[d] + ':' + cuerposPrevistos(d, kc) + (esPlantillaCorta(d, kc) ? '*' : ''));
+         return 'cuerpos por dia (* = dia con 11-7): ' + l.join(' '); })());
 
     ok('Con cuatro personas la Terminal B no se queda vacia ningun dia',
        (() => { if(!tB || !pB) return false;
-         for(let d = 0; d < 7; d++) if(ocupacion(ctxC, d, tB.id, pB.id) < 1) return false;
-         return true; })());
+         for(let d = 0; d < 7; d++){
+           if(esPlantillaCorta(d, kc)){ if(ocupacion(ctxC, d, tB.id, pB.id) < 1) return false; }
+           else if(ocupacion(ctxC, d, T['8-4'], pB.id) < 1 || ocupacion(ctxC, d, T['3-11'], pB.id) < 1) return false;
+         }
+         return true; })(),
+       'los dias de 11-7 con el turno unico, los demas con sus dos puntas');
 
     /* Cuatro agentes y la sombra: cada uno de los cuatro libra su dia y la
        sombra tambien. El dia que descansa la sombra no hay quien tape el
        10-6, asi que puede quedar uno sin cubrir. Es aritmetica, y antes
        que dejar a quien aprende siete dias seguidos se prefiere avisar. */
-    ok('Con cuatro personas no queda mas de un puesto principal sin cubrir',
-       principalesSinCubrir(kc) <= 1 && revisar(ctxC).conflictos.length === 0,
+    ok('Con cuatro personas y la sombra no queda ningun puesto principal sin cubrir',
+       principalesSinCubrir(kc) === 0 && revisar(ctxC).conflictos.length === 0,
        principalesSinCubrir(kc) + ' sin cubrir y ' + revisar(ctxC).conflictos.length + ' conflicto(s)');
 
     if(ent) ok('La sombra libra su dia aunque falte gente',
@@ -12562,6 +12690,39 @@ function pruebas(){
        (() => { let dias = 0;
          for(let d = 0; d < 7; d++){ const c = celda(ent.id, d, kc); if(c && c.t !== LIBRE) dias++; }
          return ent.nombre + ' trabaja ' + dias + ' dia(s) de sombra'; })());
+
+    /* CINCO QUE CUBREN MAS LA SOMBRA: el 11-7 no sale ningun dia. Ni el
+       domingo del dia libre fijo -que era lo que pasaba antes: ALAN libra,
+       la cuenta bajaba a cuatro presentes y se fusionaba- ni ningun otro.
+       Y ese dia fijo se respeta: la mano de la sombra en el 10-6 cuenta. */
+    (function(){
+      const conFijo = rot.find(x => x !== ent && x.libreFijo >= 0);
+      const cinco = conFijo ? [conFijo] : [];
+      rot.forEach(x => { if(cinco.length < 5 && x !== ent && cinco.indexOf(x) < 0) cinco.push(x); });
+      if(ent) cinco.push(ent);
+      if(cinco.length < 5) return;
+      rot.forEach(x => x.activo = cinco.indexOf(x) >= 0);
+      const kc5 = addDias(kc, 7);
+      SEMANA = kc5; limpiar();
+      semana(kc5); otraAlternativa(kc5);
+      const ctx5 = ctxReal(kc5);
+      ok('Con cinco que cubren y la sombra, el 11-7 de la Terminal B no sale ningun dia',
+         (() => { if(!tB || !pB) return false;
+           for(let d = 0; d < 7; d++){
+             if(esPlantillaCorta(d, kc5)) return false;
+             if(ocupacion(ctx5, d, tB.id, pB.id) >= 1) return false;
+           } return true; })(),
+         (() => { const l = [];
+           for(let d = 0; d < 7; d++) l.push(DIAS_CORTO[d] + ':' + cuerposPrevistos(d, kc5));
+           return 'cuerpos por dia: ' + l.join(' '); })());
+      if(conFijo) ok('Con cinco que cubren y la sombra, el dia libre fijo se respeta',
+         esLibreReal(celda(conFijo.id, conFijo.libreFijo, kc5)),
+         conFijo.nombre + ' libra el ' + DIAS[conFijo.libreFijo].toLowerCase());
+      ok('Con cinco que cubren y la sombra no queda ningun principal sin cubrir',
+         principalesSinCubrir(kc5) === 0 && revisar(ctx5).conflictos.length === 0,
+         principalesSinCubrir(kc5) + ' sin cubrir y ' + revisar(ctx5).conflictos.length + ' conflicto(s)');
+      delete S.semanas[kc5];
+    })();
 
     /* y en cuanto vuelve a haber gente, todo sigue igual para la sombra */
     rot.forEach((x, i) => x.activo = guardaAct[i]);
