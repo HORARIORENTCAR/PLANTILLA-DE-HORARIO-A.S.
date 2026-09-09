@@ -3854,9 +3854,26 @@ async function nubeBajar(){
   S = filas[0].datos;
   S.nube = guardadaNube;
   S.nube.ultima = filas[0].actualizado;
+  /* La nube trae los datos tal cual los dejo el ultimo equipo que subio,
+     y ese equipo puede ir por una version anterior de la aplicacion.
+     Restaurar una copia de seguridad los pasa por migrar(); esto no lo
+     hacia, y pasaba lo siguiente: al abrir, cargar() migraba lo local,
+     la sincronizacion bajaba la copia vieja de la nube encima, y esa ni
+     se migraba ni se volvia a subir. La nube se quedo en la version 22
+     con el programa ya en la 29. Ademas migrar() llama a sanear(), que
+     vacia las cuentas en memoria: sin eso apuntaban a turnos y marcas de
+     los datos de antes. */
+  const versionNube = Number(S.version) || 0;
+  try { migrar(); }
+  catch(e){ try { sanear(); S.version = 10; } catch(e2){} }
+  const migrado = (Number(S.version) || 0) !== versionNube;
   localStorage.setItem(CLAVE_GUARDADO, JSON.stringify(S));
   _nubeBajando = false;
-  _nubeEstado = 'Datos traidos de la nube (' + new Date(filas[0].actualizado).toLocaleString('es') + ')';
+  _nubeEstado = 'Datos traidos de la nube (' + new Date(filas[0].actualizado).toLocaleString('es') + ')' +
+                (migrado ? '. Venian de una version anterior y se actualizaron.' : '');
+  /* Si hubo que migrar, la copia buena es esta: se sube para que ningun
+     equipo vuelva a bajar la vieja. */
+  if(migrado) nubeProgramarSubida();
   return true;
 }
 
@@ -9117,7 +9134,7 @@ function pantallaHorario(){
    sigue con una copia vieja?". Sin un sello a la vista no hay forma de
    saberlo, y se pierde media tarde buscando el fallo donde no esta.
    ===================================================================== */
-const SELLO_VERSION = '2026-08-26-e';
+const SELLO_VERSION = '2026-09-09-a';
 
 let DIA_MOVIL = null;          // null = sin decidir, -1 = la semana, 0..6 = ese dia
 /* ¿La vista la eligio la persona o la decidio el ancho de la ventana?
