@@ -11,13 +11,15 @@ Se hace una sola vez. Calcula media hora la primera vez.
 
 > **Antes de empezar**, si todavía no conectaste Supabase, hazlo primero en la computadora siguiendo **Conectar la nube - paso a paso.md**. Sin eso el teléfono no tendría de dónde sacar los datos.
 
-> **Ya está hecho.** La aplicación vive en el repositorio `HORARIORENTCAR/PLANTILLA-DE-HORARIO-A.S.` y se abre en:
+> **Ya está hecho.** La aplicación vive en el repositorio `eabuilts/PLANTILLA-DE-HORARIO-A.S.` y se abre en:
 >
 > ```
-> https://horariorentcar.github.io/PLANTILLA-DE-HORARIO-A.S./
+> https://eabuilts.github.io/PLANTILLA-DE-HORARIO-A.S./
 > ```
 >
 > El Paso 1 queda como referencia por si algún día hay que volver a montarlo. Para instalarlo en un teléfono nuevo, salta al **Paso 2**.
+
+> **El 13 de septiembre de 2026 el usuario de GitHub pasó de HORARIORENTCAR a eabuilts.** La dirección vieja, `horariorentcar.github.io/...`, ya no abre. Si tenías la app instalada con la dirección vieja: bórrala, abre la nueva, instálala otra vez (Paso 2 o 3) y vuelve a pegar la línea de conexión (Paso 4). Los datos no se pierden: están en Supabase.
 
 ---
 
